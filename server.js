@@ -40,10 +40,11 @@ app.post('/add', async (req, res) => {
   res.send('Data added to Firebase');
 });
 
-// Route to get data from Firebase
-app.get('/get', async (req, res) => {
-  const docRef = doc(db, 'users', 'user1');
+app.get('/get/:id', async (req, res) => {
+  const { id } = req.params; // Extract the id from the request parameters
+  const docRef = doc(db, 'users', id); // Use the id to get the document reference
   const docSnap = await getDoc(docRef);
+
   if (!docSnap.exists()) {
     res.status(404).send('No such document!');
   } else {
@@ -71,3 +72,4 @@ app.get('/shortclose', (req, res) => {
   res.json({ message: 'This is the short close API response.' });
 });
 
+export default app;
