@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import sn from "stocknotejsbridge";
 import { MongoClient } from "mongodb";
+import { randomUUID } from "crypto";
 const app = express();
 const PORT = process.env.PORT || 5001;
 const uri = "mongodb+srv://balpreet:ct8bCW7LDccrGAmQ@cluster0.2pwq0w2.mongodb.net/tradingdb";
@@ -67,7 +68,8 @@ app.post("/samcoTestPlaceOrder", async (req, res) => {
       query: req.query,
       // add any other properties you need here
     };
-    const reqID = await upsertDBlog('WebhookCall', {"reqst": dataToSave});    
+    
+    const reqID = await upsertDBlog('WebhookCall', {"reqst": dataToSave},{"uid":randomUUID()});    
   } catch (error) {
     console.error(error);    
     res.status(500).send({ error: 'Failed to upsert the webhook call' });
