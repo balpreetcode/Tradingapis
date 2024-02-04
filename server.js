@@ -7,7 +7,8 @@ const app = express();
 const PORT = process.env.PORT || 5001;
 const uri = "mongodb+srv://balpreet:ct8bCW7LDccrGAmQ@cluster0.2pwq0w2.mongodb.net/tradingdb";
 let client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true });
-
+app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
 dotenv.config();
 app.use(cors());
 
@@ -30,7 +31,9 @@ let reqdata={
   "alert_name": "Alert for 15 minute Stock Breakouts",
   "webhook_url": "https://us-central1-techprojects-24daa.cloudfunctions.net/app/PlaceOrderChartInk"
 };
-
+function cl(data) {
+  console.log(data);
+}
 async function upsertDBlog(collectionName, req,filter) {
   try {
       const db = await dbConnect();
@@ -57,7 +60,14 @@ app.get("/", (req, res) => {
 
 app.post("/samcoTestPlaceOrder", async (req, res) => {
   try {
-    const reqID = await upsertDBlog('WebhookCall', {req:req});    
+    console.log(req.body);
+    const dataToSave = {
+      body: req.body,
+      headers: req.headers,
+      query: req.query,
+      // add any other properties you need here
+    };
+    const reqID = await upsertDBlog('WebhookCall', {"reqst": dataToSave});    
   } catch (error) {
     console.error(error);    
     res.status(500).send({ error: 'Failed to upsert the webhook call' });
@@ -177,7 +187,7 @@ let stocks = [];
               tradeType='BUY'
           }
 
-          cl(stocks[i]);
+          // cl(stocks[i]);
       const stock = await getSymbolDetail(stocks[i]);
       const exchange=stock.exchange;
    //   console.log(exchange);
@@ -192,7 +202,7 @@ let stocks = [];
       if(cnf.isStockCount) quantity=cnf.stocksPurchaseCount;
       if(cnf.isOptionAsPerBudget) quantity=Math.floor(quantity / lotSize) * lotSize;
 
-      cl([stocks[i],exchange,lotSize, tradeType,lmt,quantity]);        
+      // cl([stocks[i],exchange,lotSize, tradeType,lmt,quantity]);        
       if(quantity==0 || quantity*price>lmt) responses.push({error: 'quantity is 0 or more than budget'}); 
       else {
           let slPrice=(req.query.SLper) ? price*(100-req.query.SLper)/100: price*.99;
@@ -226,10 +236,10 @@ let stocks = [];
           };
           const response = await samcoApiCall('placeOrder', order);
           const response2 = await samcoApiCall('placeOrder', tgtOrder);
-          cl(response);
-          cl(response2);
+          // cl(response);
+          // cl(response2);
       let data={lotSize:lotSize,SL:cnf.SL,MinProfit:cnf.MinProfit,TrailingSL: cnf.TrailingSL,Budget:lmt,Quantity:quantity,reqID:reqID,req:order};
-      cl(data);
+      // cl(data);
       upsertDBlog('TradingData',data);
           responses.push(response);
       }
