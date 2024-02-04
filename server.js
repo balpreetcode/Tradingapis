@@ -1,10 +1,12 @@
 import express from "express";
-const app = express();
-const PORT = process.env.PORT || 5001;
 import cors from "cors";
 import dotenv from "dotenv";
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
+import sn from "stocknotejsbridge";
+import { MongoClient } from "mongodb";
+const app = express();
+const PORT = process.env.PORT || 5001;
+const uri = "mongodb+srv://balpreet:ct8bCW7LDccrGAmQ@cluster0.2pwq0w2.mongodb.net/tradingdb";
+let client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
 dotenv.config();
 app.use(cors());
@@ -12,16 +14,13 @@ app.use(cors());
 app.listen(PORT, () => {
   console.log(`Backend is running on port ${PORT}`);
 });
+async function dbConnect() {
+  if (!client) {
+    client = await MongoClient.connect(uri);
+  }
+  return client.db();
+}
 
-const firebaseConfig = {
-  apiKey: "AIzaSyBpJ259fUt9afgnFOEabtjoKbEwbFm_gZ8",
-  authDomain: "vrchat-2f58c.firebaseapp.com",
-  projectId: "vrchat-2f58c",
-  storageBucket: "vrchat-2f58c.appspot.com",
-  messagingSenderId: "315680730497",
-  appId: "1:315680730497:web:acd9cd885946d0bc33cc80",
-  measurementId: "G-JFJVFZS1H3"
-};
 let reqdata={
   "stocks": "BIKAJI,LATENTVIEW,LTIM,SHOPERSTOP,HONAUT,BAJAJELEC",
   "trigger_prices": "414.05,347,5062.3,812.7,42368.2,1271.45",
@@ -31,86 +30,93 @@ let reqdata={
   "alert_name": "Alert for 15 minute Stock Breakouts",
   "webhook_url": "https://us-central1-techprojects-24daa.cloudfunctions.net/app/PlaceOrderChartInk"
 };
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+
+async function upsertDBlog(collectionName, req,filter) {
+  try {
+      const db = await dbConnect();
+      const collection = db.collection(collectionName);
+      const query = (filter)?filter:{};
+      if(!req) return 'object is blank';
+      req.time=new Date();
+      const update = { $set: req};
+      const options = { upsert: true };
+      let x = await collection.updateOne(query, update, options);
+      if (x.upsertedCount > 0) return cl(x.upsertedId.toHexString());     
+     else if(x.modifiedCount > 0) return cl(x.modifiedCount +' documents were modified');
+     else   return cl("No documents were upserted.");
+     
+    } catch (ex) {
+      console.log(ex);
+      return ex;
+    }
+}
 
 app.get("/", (req, res) => {
   res.send("Welcome to the API!");
 });
 
-let slPrice=(req.query.SLper) ? price*(100-req.query.SLper)/100: price*.99;
-          let tgtPrice=(req.query.TGTper) ? price*(100+req.query.TGTper)/100: price*1.01;    
-          const order = {
-              symbolName: stocks[i],
-              exchange: exchange,
-              transactionType: tradeType,
-              orderType: "SL",//"MKT",
-              quantity: quantity.toString(),
-              disclosedQuantity: "",
-              orderValidity: "DAY",
-              productType: "MIS",
-              price:price,
-              priceType:"LTP",
-              triggerPrice:slPrice,
-              afterMarketOrderFlag: "NO"
-          };
-          const tgtOrder = {
-              symbolName: stocks[i],
-              exchange: exchange,
-              transactionType: tradeType,
-              orderType: "L",//"MKT",
-              quantity: quantity.toString(),
-              disclosedQuantity: "",
-              orderValidity: "DAY",
-              productType: "MIS",
-              price:tgtPrice,
-              priceType:"LTP",
-              afterMarketOrderFlag: "NO"
-          };
-          const response = await samcoApiCall('placeOrder', order);
-          const response2 = await samcoApiCall('placeOrder', tgtOrder);
-          cl(response);
-          cl(response2);
-      let data={lotSize:lotSize,SL:cnf.SL,MinProfit:cnf.MinProfit,TrailingSL: cnf.TrailingSL,Budget:lmt,Quantity:quantity,reqID:reqID,req:order};
-      cl(data);
-      upsertDBlog('TradingData',data);
-
-async function upsertDBlog(collectionName, req, filter) {
-  const collectionRef = collection(db, collectionName);
-  let query = collectionRef;
-
-  // Apply the filter if it exists
-  if (filter) {
-    for (const [field, operator, value] of filter) {
-      query = where(query, field, operator, value);
-    }
+app.post("/samcoTestPlaceOrder", async (req, res) => {
+  try {
+    const reqID = await upsertDBlog('WebhookCall', {query:req.query, body:req.body});    
+  } catch (error) {
+    console.error(error);    
+    res.status(500).send({ error: 'Failed to upsert the webhook call' });
   }
+  res.status(200).send({ data: 'success' });
+});
 
-  const querySnapshot = await getDocs(query);
-  const docs = querySnapshot.docs;
+// let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${stocks[i]}`);
+// let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='',CEsymbol='',PEsymbol='';
+// for (let detail of optionsData.optionChainDetails) {
+//     let volume = parseInt(detail.volume, 10);    
+//     if (volume > maxVolume) {
+//         maxVolume = volume;
+//         maxVolumeTradingSymbol = detail.tradingSymbol;
+//         optionType=detail.optionType;
+//     }
+// }
+// let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == CEsymbol || dt.tradingSymbol == PEsymbol);
+// app.post('/sampcoPlaceOrder', async (req, res) => {
+// let slPrice=(req.query.SLper) ? price*(100-req.query.SLper)/100: price*.99;
+//           let tgtPrice=(req.query.TGTper) ? price*(100+req.query.TGTper)/100: price*1.01;    
+//           const order = {
+//               symbolName: stocks[i],
+//               exchange: exchange,
+//               transactionType: tradeType,
+//               orderType: "SL",//"MKT",
+//               quantity: quantity.toString(),
+//               disclosedQuantity: "",
+//               orderValidity: "DAY",
+//               productType: "MIS",
+//               price:price,
+//               priceType:"LTP",
+//               triggerPrice:slPrice,
+//               afterMarketOrderFlag: "NO"
+//           };
+//           const tgtOrder = {
+//               symbolName: stocks[i],
+//               exchange: exchange,
+//               transactionType: tradeType,
+//               orderType: "L",//"MKT",
+//               quantity: quantity.toString(),
+//               disclosedQuantity: "",
+//               orderValidity: "DAY",
+//               productType: "MIS",
+//               price:tgtPrice,
+//               priceType:"LTP",
+//               afterMarketOrderFlag: "NO"
+//           };
+//           const response = await samcoApiCall('placeOrder', order);
+//           const response2 = await samcoApiCall('placeOrder', tgtOrder);
+//           cl(response);
+//           cl(response2);
+//       let data={lotSize:lotSize,SL:cnf.SL,MinProfit:cnf.MinProfit,TrailingSL: cnf.TrailingSL,Budget:lmt,Quantity:quantity,reqID:reqID,req:order};
+//       cl(data);
+//       upsertDBlog('TradingData',data);
+//           responses.push(response);
+//       });
 
-  for (const doc of docs) {
-    const docRef = doc(db, collectionName, doc.id);
-    try {
-      await setDoc(docRef, req, { merge: true }); // Merge the new data with the existing document
-      const docSnap = await getDoc(docRef);
-    
-      if (!docSnap.exists()) {
-        console.log("No documents were upserted.");
-        return "No documents were upserted.";
-      } else if (docSnap.data().time === req.time) {
-        console.log("1 document was upserted.");
-        return "1 document was upserted.";
-      } else {
-        console.log("1 document was modified.");
-        return "1 document was modified.";
-      }
-    } catch (ex) {
-      console.log(ex);
-      return ex;
-    }
-  }
-}
+
 
 app.get('/get/:id', async (req, res) => {
   const { id } = req.params; // Extract the id from the request parameters
@@ -124,17 +130,6 @@ app.get('/get/:id', async (req, res) => {
   }
 });
 
-let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${stocks[i]}`);
-let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='',CEsymbol='',PEsymbol='';
-for (let detail of optionsData.optionChainDetails) {
-    let volume = parseInt(detail.volume, 10);    
-    if (volume > maxVolume) {
-        maxVolume = volume;
-        maxVolumeTradingSymbol = detail.tradingSymbol;
-        optionType=detail.optionType;
-    }
-}
-let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == CEsymbol || dt.tradingSymbol == PEsymbol);
              
 //Done and Tested
 app.post("/PlaceOrder", async (req, res) => {
@@ -331,7 +326,7 @@ async function samcoApiCall(ApiName, ReqData) {
     console.error(`Error: ${error}`);
     throw error;
   }
-}
+}                                                                                                                                                                                                 
 
 // Route for 'long'
 app.get('/long', (req, res) => {
