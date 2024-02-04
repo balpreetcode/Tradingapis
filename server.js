@@ -52,7 +52,7 @@ async function upsertDBlog(collectionName, req,filter) {
 }
 
 app.get("/", (req, res) => {
-  res.send("Welcome to the API!");
+  res.send("Welcome to the API!v2");
 });
 
 app.post("/samcoTestPlaceOrder", async (req, res) => {
