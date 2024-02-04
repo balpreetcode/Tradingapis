@@ -57,7 +57,7 @@ app.get("/", (req, res) => {
 
 app.post("/samcoTestPlaceOrder", async (req, res) => {
   try {
-    const reqID = await upsertDBlog('WebhookCall', {query:req.query, body:req.body});    
+    const reqID = await upsertDBlog('WebhookCall', {req:req});    
   } catch (error) {
     console.error(error);    
     res.status(500).send({ error: 'Failed to upsert the webhook call' });
