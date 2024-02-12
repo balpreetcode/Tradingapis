@@ -62,18 +62,34 @@ app.get("/", (req, res) => {
 app.post("/samcoTestPlaceOrder", async (req, res) => {
   try {
     console.log(req.body);
-    const dataToSave = {
+    const data = {
       body: req.body,
       headers: req.headers,
       query: req.query,
       // add any other properties you need here
     };
     
-    const reqID = await upsertDBlog('WebhookCall', {"reqst": dataToSave},{"uid":randomUUID()});    
+    const reqID = await upsertDBlog('WebhookCall', {"reqst": data} , {"uid":randomUUID()});    
   } catch (error) {
     console.error(error);    
     res.status(500).send({ error: 'Failed to upsert the webhook call' });
   }
+
+  const order = {
+                  symbolName: req.data.symbol,
+                  exchange: req.data.exchange,
+                  transactionType: tradeType,
+                  orderType: "SL",//"MKT",
+                  quantity: quantity.toString(),
+                  disclosedQuantity: "",
+                  orderValidity: "DAY",
+                  productType: "MIS",
+                  price:price,
+                  priceType:"LTP",
+                  triggerPrice:slPrice,
+                  afterMarketOrderFlag: "NO"
+              };
+
   res.status(200).send({ data: 'success' });
 });
 
