@@ -35,6 +35,7 @@ let reqdata={
 function cl(data) {
   console.log(data);
 }
+
 async function upsertDBlog(collectionName, req,filter) {
   try {
       const db = await dbConnect();
@@ -157,175 +158,564 @@ app.get('/get/:id', async (req, res) => {
     res.send(docSnap.data());
   }
 });
+async function testcall(req)
+{
+    
+    url='http://localhost:3000/'
+    let response1 = await axios.post(url + 'PlaceOrderChartInk',req);
+   // let response = await axios.post(url + 'reverseNegativePositions?stocks=[IRCTC,IRCTC23JUN650CE,IRCTC23JUN650PE]', reqdata);
+    
+   // let response = await axios.post(url + 'cancelPendingOrders',{});
+   // cl(response.data);
 
-             
+
+
+    //let response = await axios.get(url + 'chartInkSyncSamcoSymbols');
+    //let response1 = await axios.post(url + 'PlaceOrderChartInk?config=ChartinkOption1&isPurchaseOptions=false&tradeType=buy&isPapertrade=true', reqdata);
+    //let response1 = await axios.post(url + 'PlaceOrderChartInk?config=ChartinkOption1&isPurchaseOptions=false&tradeType=buy', reqdata);
+    //let response = await axios.post(url + 'PlaceOrder?stocks=IRCTC&isPurchaseOptions=false&tradeType=buy', reqdata);
+   // console.log(response);
+}  
+
+let isPapertrade=true;
+
+
+
+//Done need testing
+app.post("/updateTrailingStopLoss", async (req, res) => {
+  isPapertrade= chkeq(req.query.isPapertrade,'true');
+  // Call an API endpoint to get current positions
+  let positionsResponse = await samcoApiCall('getPositions', '');
+  let positionDetail = positionsResponse.positionDetails.filter(pos => pos.netQuantity > 0);
+
+if (!positionsResponse.positionDetails || positionDetail.length === 0) {
+  return res.status(500).send({ error: 'Failed to retrieve positions or all positions have zero net quantity' });
+}
+
+  // Get the list of stocks from the request query, if provided
+  let requestedStocks = getStrArray(req.query.stocks);
+  // Filter for negative positions, and only for requested stocks if provided
+
+  cl(positionDetail.map(pos => pos.markToMarketPrice));
+  let positions = positionDetail.filter(position => {
+      return  (!requestedStocks || requestedStocks.includes(position.tradingSymbol));
+  });
+  
+     // Prepare a place to collect responses
+     let responses = [];
+      // Get configuration from database
+      let conf=(req.query.config)?req.query.config:'standardConfig';
+      const reqConf=await getConfigFromDB(conf); 
+  
+     // Iterate over the positions
+     for (let position of positions) {
+        let symConf=findFromDB('TradingData',{symbol:position.tradingSymbol});
+        let config=(symConf)? symConf:reqConf;
+        cl(config);
+        return;
+
+         // Check if the PnL is greater than the minimum profit
+         if (position.pnl > config.MinProfit) {
+ 
+             // Update the trailing stop loss and minimum profit
+             config.TrailingStopLoss = position.pnl - config.TrailingSLstep;
+             config.MinProfit = position.pnl + config.TrailingSLstep;
+ 
+             //TODO Save the updated configuration to the database
+             let updateResponse = await upsertDBlog('TradingData',{symbol:position.tradingSymbol, position:position,config});
+             responses.push(updateResponse);
+ 
+         // Check if the PnL is less than the trailing stop loss
+         } else if (position.pnl < config.TrailingStopLoss) {
+ 
+             // Define the order to close the trade
+             let order = {
+                 symbolName: position.tradingSymbol,
+                 exchange: position.exchange,
+                 transactionType: position.transactionType === 'BUY' ? 'SELL' : 'BUY',  // Reverse the transaction type
+                 orderType: 'MKT',  // Market order to ensure the order is filled
+                 quantity: position.netQuantity.toString(),
+                 orderValidity: 'DAY',
+                 productType: 'MIS',
+                 afterMarketOrderFlag: 'NO'
+             };
+ 
+             // Call the API to place the order
+             let orderResponse = await samcoApiCall('placeOrder', order);
+             responses.push(orderResponse);
+         }
+     }
+ 
+     // Respond with the data
+     res.status(200).send({ data: responses });
+ });
+ //Done and Tested
+app.post("/PlaceOrderChartInk", async (req, res) => {
+    const db = await dbConnect();
+    const orderCollection = db.collection('chartInkCalls');
+    const cIId = await orderCollection.insertOne(req.body);
+
+   // const cIId= upsertDBlog('chartInkCalls',req.body);
+//     res.status(200).send({ data: responses });
+// return;
+
+
+
+    let tradeType = chkeq(req.query.tradeType,'sell') ? 'SELL' : 'BUY';
+  //  cl([req.query.tradeType, req.query.tradeType && typeof req.query.tradeType === 'string' && req.query.tradeType.toLowerCase() === 'sell']);    
+    const stocks = req.body.stocks.split(",");
+    let conf=(req.query.config)?req.query.config:'Chartink';
+    const cnf=await getConfigFromDB(conf);
+    const triggerPrices = req.body.trigger_prices.split(",");
+    let limitResponse = await samcoApiCall('getLimits','');
+    let lmt=limitResponse.equityLimit.grossAvailableMargin;
+   // console.log(lmt,stocks,triggerPrices);
+    let responses = [];
+    for (let i = 0; i < 1; i++) {
+            // Check if the 'isPurchaseOptions' query parameter is set to 'true'
+            if(chkeq(req.query.isPurchaseOptions , 'true')){
+                let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${stocks[i]}`);
+               // cl(optionsData);
+                let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='',CEsymbol='',PEsymbol='';
+                for (let detail of optionsData.optionChainDetails) {
+                    let volume = parseInt(detail.volume, 10);    
+                    if (volume > maxVolume) {
+                        maxVolume = volume;
+                        maxVolumeTradingSymbol = detail.tradingSymbol;
+                        optionType=detail.optionType;
+                    }
+                }
+                // Override the symbol name with the symbol of the option that has the maximum volume
+                if(optionType=='CE')
+                { 
+                    CEsymbol= maxVolumeTradingSymbol; 
+                    PEsymbol= maxVolumeTradingSymbol.replace('CE', 'PE');//TODO only in end change                
+                } else 
+                {  
+                    PEsymbol= maxVolumeTradingSymbol; 
+                    CEsymbol= maxVolumeTradingSymbol.replace('PE', 'CE');//TODO only in end change                
+                }  
+                let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == CEsymbol || dt.tradingSymbol == PEsymbol);
+                
+                stocks[i] = (tradeType=='SELL')? PEsymbol:CEsymbol ;
+                tradeType='BUY'
+            }
+
+            cl(stocks[i]);
+        const stock = await getSymbolDetail(stocks[i]);
+        const exchange=(stock.exchange == 'BSE')? 'NSE':stock.exchange;
+     //   console.log(exchange);
+        let priceResponse = await samcoApiCall('getQuote',`?exchange=${exchange}&symbolName=${stocks[i]}`);
+       // cl(priceResponse);
+        let price = priceResponse.lastTradedPrice; 
+        const lotSize=stock.lotSize;
+        let quantity=0;
+        if(cnf.isAsPerBudget) quantity= Math.floor(Math.floor(lmt* cnf.budgetPercent / cnf.stocksPurchaseCount)/price);
+        if(cnf.isOptionLotCount) quantity = lotSize * cnf.optionLotCount;
+        if(cnf.isStockCount) quantity=cnf.stocksPurchaseCount;
+        if(cnf.isOptionAsPerBudget) quantity=Math.floor(quantity / lotSize) * lotSize;
+        cl([stocks[i],exchange,lotSize, tradeType,lmt,quantity]);        
+        if(quantity==0 || quantity*price>lmt) responses.push({error: 'quantity is 0 or more than budget'}); 
+        else {
+            let slPrice=(req.query.SLper) ? price*(100-req.query.SLper)/100: price*.99;
+            let tgtPrice=(req.query.TGTper) ? price*(100+req.query.TGTper)/100: price*1.006;
+            const order = {
+                symbolName: stocks[i],
+                exchange: exchange,
+                transactionType: tradeType,
+                orderType: "SL",//"MKT",
+                quantity: quantity.toString(),
+                disclosedQuantity: "",
+                orderValidity: "DAY",
+                productType: "MIS",
+                price:parseFloat(price).toFixed(1),
+                priceType:"LTP",
+                triggerPrice:parseFloat(slPrice).toFixed(1),
+                afterMarketOrderFlag: "NO"
+            };
+            const tgtOrder = {
+                symbolName: stocks[i],
+                exchange: exchange,
+                transactionType: (tradeType=="BUY")?"SELL":"BUY",
+                orderType: "L",//"MKT",
+                quantity: quantity.toString(),
+                disclosedQuantity: "",
+                orderValidity: "DAY",
+                productType: "MIS",
+                price:parseFloat(tgtPrice).toFixed(1),
+                priceType:"LTP",
+                afterMarketOrderFlag: "NO"
+            };
+           
+   
+            const response = await samcoApiCall('placeOrder', order);
+            const response2 = await samcoApiCall('placeOrder', tgtOrder);
+            cl(response);
+            cl(response2);
+        let data={lotSize:lotSize,SL:cnf.SL,MinProfit:cnf.MinProfit,TrailingSL: cnf.TrailingSL,Budget:lmt,Quantity:quantity,CIID:cIId,req:order,tgtOrder:tgtOrder};
+        upsertDBlog('TradingData',data);
+            responses.push(response);
+        }
+    }
+    res.status(200).send({ data: responses });
+
+});
 //Done and Tested
 app.post("/PlaceOrder", async (req, res) => {
-  const reqID = await upsertDBlog('WebhookCall', req.query);
-  let tradeType = chkeq(req.query.tradeType,'sell') ? 'SELL' : 'BUY';
-//  cl([req.query.tradeType, req.query.tradeType && typeof req.query.tradeType === 'string' && req.query.tradeType.toLowerCase() === 'sell']);    
-let stocks = [];
+    const reqID = await upsertDBlog('WebhookCall', req.query);
+    let tradeType = chkeq(req.query.tradeType,'sell') ? 'SELL' : 'BUY';
+  //  cl([req.query.tradeType, req.query.tradeType && typeof req.query.tradeType === 'string' && req.query.tradeType.toLowerCase() === 'sell']);    
+  let stocks = [];
 
-// Check if stocks parameter includes brackets, indicating it's an array
-  stocks= getStrArray(req.query.stocks);
+  // Check if stocks parameter includes brackets, indicating it's an array
+    stocks= getStrArray(req.query.stocks);
+  
+    let conf=(req.query.config)?req.query.config:'standardConfig';
+    const cnf=await getConfigFromDB(conf);
+    let limitResponse = await samcoApiCall('getLimits','');
+    let lmt=limitResponse.equityLimit.grossAvailableMargin;
+   // console.log(lmt,stocks,triggerPrices);
+    let responses = [];
+    for (let i = 0; i < 1; i++) {
+            // Check if the 'isPurchaseOptions' query parameter is set to 'true'
+            if(chkeq(req.query.isPurchaseOptions , 'true')){
+                let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${stocks[i]}`);
+               // cl(optionsData);
+                let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='',CEsymbol='',PEsymbol='';
+                for (let detail of optionsData.optionChainDetails) {
+                    let volume = parseInt(detail.volume, 10);    
+                    if (volume > maxVolume) {
+                        maxVolume = volume;
+                        maxVolumeTradingSymbol = detail.tradingSymbol;
+                        optionType=detail.optionType;
+                    }
+                }
+                // Override the symbol name with the symbol of the option that has the maximum volume
+                if(optionType=='CE') 
+                { 
+                    CEsymbol= maxVolumeTradingSymbol; 
+                    PEsymbol= maxVolumeTradingSymbol.replace('CE', 'PE');//TODO only in end change                
+                } else 
+                {  
+                    PEsymbol= maxVolumeTradingSymbol; 
+                    CEsymbol= maxVolumeTradingSymbol.replace('PE', 'CE');//TODO only in end change                
+                }  
+                let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == CEsymbol || dt.tradingSymbol == PEsymbol);
+                
+                stocks[i] = (tradeType=='SELL')? PEsymbol:CEsymbol ;
+                tradeType='BUY'
+            }
 
-  let conf=(req.query.config)?req.query.config:'standardConfig';
-  const cnf=await getConfigFromDB(conf);
-  let limitResponse = await samcoApiCall('getLimits','');
-  let lmt=limitResponse.equityLimit.grossAvailableMargin;
- // console.log(lmt,stocks,triggerPrices);
-  let responses = [];
-  for (let i = 0; i < 1; i++) {
-          // Check if the 'isPurchaseOptions' query parameter is set to 'true'
-          if(chkeq(req.query.isPurchaseOptions , 'true')){
-              let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${stocks[i]}`);
-             // cl(optionsData);
-              let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='',CEsymbol='',PEsymbol='';
-              for (let detail of optionsData.optionChainDetails) {
-                  let volume = parseInt(detail.volume, 10);    
-                  if (volume > maxVolume) {
-                      maxVolume = volume;
-                      maxVolumeTradingSymbol = detail.tradingSymbol;
-                      optionType=detail.optionType;
-                  }
-              }
-              // Override the symbol name with the symbol of the option that has the maximum volume
-              if(optionType=='CE') 
-              { 
-                  CEsymbol= maxVolumeTradingSymbol; 
-                  PEsymbol= maxVolumeTradingSymbol.replace('CE', 'PE');//TODO only in end change                
-              } else 
-              {  
-                  PEsymbol= maxVolumeTradingSymbol; 
-                  CEsymbol= maxVolumeTradingSymbol.replace('PE', 'CE');//TODO only in end change                
-              }  
-              let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == CEsymbol || dt.tradingSymbol == PEsymbol);
-              
-              stocks[i] = (tradeType=='SELL')? PEsymbol:CEsymbol ;
-              tradeType='BUY'
-          }
-
-          // cl(stocks[i]);
-      const stock = await getSymbolDetail(stocks[i]);
-      const exchange=stock.exchange;
-   //   console.log(exchange);
-      let priceResponse = await samcoApiCall('getQuote',`?exchange=${exchange}&symbolName=${stocks[i]}`);
-     // cl(priceResponse);
-      let price = priceResponse.closeValue; // You should get the price from the priceResponse
-      const lotSize=stock.lotSize;
-      const stocksPurchaseNo=cnf.stocksPurchaseNo //TODO move to config
-      let quantity=0;
-      if(cnf.isAsPerBudget) quantity= Math.floor(Math.floor(lmt* cnf.budgetPercent / cnf.stocksPurchaseCount)/price);
-      if(cnf.isOptionLotCount) quantity = lotSize * cnf.optionLotCount;
-      if(cnf.isStockCount) quantity=cnf.stocksPurchaseCount;
-      if(cnf.isOptionAsPerBudget) quantity=Math.floor(quantity / lotSize) * lotSize;
-
-      // cl([stocks[i],exchange,lotSize, tradeType,lmt,quantity]);        
-      if(quantity==0 || quantity*price>lmt) responses.push({error: 'quantity is 0 or more than budget'}); 
-      else {
-          let slPrice=(req.query.SLper) ? price*(100-req.query.SLper)/100: price*.99;
-          let tgtPrice=(req.query.TGTper) ? price*(100+req.query.TGTper)/100: price*1.01;    
-          const order = {
-              symbolName: stocks[i],
-              exchange: exchange,
-              transactionType: tradeType,
-              orderType: "SL",//"MKT",
-              quantity: quantity.toString(),
-              disclosedQuantity: "",
-              orderValidity: "DAY",
-              productType: "MIS",
-              price:price,
-              priceType:"LTP",
-              triggerPrice:slPrice,
-              afterMarketOrderFlag: "NO"
-          };
-          const tgtOrder = {
-              symbolName: stocks[i],
-              exchange: exchange,
-              transactionType: tradeType,
-              orderType: "L",//"MKT",
-              quantity: quantity.toString(),
-              disclosedQuantity: "",
-              orderValidity: "DAY",
-              productType: "MIS",
-              price:tgtPrice,
-              priceType:"LTP",
-              afterMarketOrderFlag: "NO"
-          };
-          const response = await samcoApiCall('placeOrder', order);
-          const response2 = await samcoApiCall('placeOrder', tgtOrder);
-          // cl(response);
-          // cl(response2);
-      let data={lotSize:lotSize,SL:cnf.SL,MinProfit:cnf.MinProfit,TrailingSL: cnf.TrailingSL,Budget:lmt,Quantity:quantity,reqID:reqID,req:order};
-      // cl(data);
-      upsertDBlog('TradingData',data);
-          responses.push(response);
-      }
-  }
-  res.status(200).send({ data: responses });
+            cl(stocks[i]);
+        const stock = await getSymbolDetail(stocks[i]);
+        const exchange=stock.exchange;
+     //   console.log(exchange);
+        let priceResponse = await samcoApiCall('getQuote',`?exchange=${exchange}&symbolName=${stocks[i]}`);
+       // cl(priceResponse);
+        let price = priceResponse.closeValue; // You should get the price from the priceResponse
+        const lotSize=stock.lotSize;
+        const stocksPurchaseNo=cnf.stocksPurchaseNo //TODO move to config
+        let quantity=0;
+        if(cnf.isAsPerBudget) quantity= Math.floor(Math.floor(lmt* cnf.budgetPercent / cnf.stocksPurchaseCount)/price);
+        if(cnf.isOptionLotCount) quantity = lotSize * cnf.optionLotCount;
+        if(cnf.isStockCount) quantity=cnf.stocksPurchaseCount;
+        if(cnf.isOptionAsPerBudget) quantity=Math.floor(quantity / lotSize) * lotSize;
+  
+        cl([stocks[i],exchange,lotSize, tradeType,lmt,quantity]);        
+        if(quantity==0 || quantity*price>lmt) responses.push({error: 'quantity is 0 or more than budget'}); 
+        else {
+            let slPrice=(req.query.SLper) ? price*(100-req.query.SLper)/100: price*.99;
+            let tgtPrice=(req.query.TGTper) ? price*(100+req.query.TGTper)/100: price*1.01;    
+            const order = {
+                symbolName: stocks[i],
+                exchange: exchange,
+                transactionType: tradeType,
+                orderType: "SL",//"MKT",
+                quantity: quantity.toString(),
+                disclosedQuantity: "",
+                orderValidity: "DAY",
+                productType: "MIS",
+                price:price,
+                priceType:"LTP",
+                triggerPrice:slPrice,
+                afterMarketOrderFlag: "NO"
+            };
+            const tgtOrder = {
+                symbolName: stocks[i],
+                exchange: exchange,
+                transactionType: tradeType,
+                orderType: "L",//"MKT",
+                quantity: quantity.toString(),
+                disclosedQuantity: "",
+                orderValidity: "DAY",
+                productType: "MIS",
+                price:tgtPrice,
+                priceType:"LTP",
+                afterMarketOrderFlag: "NO"
+            };
+            const response = await samcoApiCall('placeOrder', order);
+            const response2 = await samcoApiCall('placeOrder', tgtOrder);
+            cl(response);
+            cl(response2);
+        let data={lotSize:lotSize,SL:cnf.SL,MinProfit:cnf.MinProfit,TrailingSL: cnf.TrailingSL,Budget:lmt,Quantity:quantity,reqID:reqID,req:order};
+        cl(data);
+        upsertDBlog('TradingData',data);
+            responses.push(response);
+        }
+    }
+    res.status(200).send({ data: responses });
 
 });
 //Done and tested
 app.post("/cancelPendingOrders", async (req, res) => {
 
-  // Call an API endpoint to get current orders
-  let activestatus=['After Market Order Req Received','Pending Order'];
-  let orders = await samcoApiCall('orderBook', '');
-  let responses=[];
-  let orderbook=(orders && orders.orderBookDetails)?orders.orderBookDetails:[];
-  let pendingSLOrders = orderbook.filter(o => {
-      return (activestatus.includes(o.status) && o.orderType=='SL');
-  });
-  
-  //cl(activeOrders); return;
-  for (let order of activeOrders)
-  {
-      let tgtOrders = orderbook.filter(o => {
-          return (o.tradingSymbol==order.tradingSymbol && o.orderType=='L' &&
-           activestatus.includes(o.status))
-      });
-      let response = await samcoApiCall('cancelOrder', `?orderNumber=${order.orderNumber}`);
-      for (let tgtOrder of tgtOrders)
-      {
-          let response = await samcoApiCall('cancelOrder', `?orderNumber=${tgtOrder.orderNumber}`);
-          responses.push(response);
-      }
-      if(tgtOrders.count==0)
-      {
-          let pos=samcoApiCall('getPositions','');
-          let Lorder = pos.positionDetails.filter(pos => pos.netQuantity > 0 && pos.orderType=='L' 
-          && pos.tradingSymbol==order.tradingSymbol);
-          let slOrder = pos.positionDetails.filter(pos => pos.netQuantity > 0 && pos.orderType=='SL' 
-          && pos.tradingSymbol==order.tradingSymbol);
-          if(Lorder.count==1 && slOrder.count==0)
-          {
-              const order = {
-                  symbolName: Lorder[0].tradingSymbol,
-                  exchange: Lorder.exchange,
-                  transactionType: 'SELL',
-                  orderType: "MKT",//"MKT",
-                  quantity: pos.netQuantity.toString(),
-                  disclosedQuantity: "",
-                  orderValidity: "DAY",
-                  productType: "MIS",
-                  afterMarketOrderFlag: "NO"
-              };
-              let r=samcoApiCall('placeOrder',order);
-          }
-          if(Lorder.count>1 || slOrder.count>0){}  //TODO
+    // Call an API endpoint to get current orders
+    let activestatus=['After Market Order Req Received','Pending Order'];
+    let orders = await samcoApiCall('orderBook', '');
+    let responses=[];
+    let orderbook=(orders && orders.orderBookDetails)?orders.orderBookDetails:[];
+    let pendingSLOrders = orderbook.filter(o => {
+        return (activestatus.includes(o.status) && o.orderType=='SL');
+    });
+    
+    //cl(activeOrders); return;
+    for (let order of activeOrders)
+    {
+        let tgtOrders = orderbook.filter(o => {
+            return (o.tradingSymbol==order.tradingSymbol && o.orderType=='L' &&
+             activestatus.includes(o.status))
+        });
+        let response = await samcoApiCall('cancelOrder', `?orderNumber=${order.orderNumber}`);
+        for (let tgtOrder of tgtOrders)
+        {
+            let response = await samcoApiCall('cancelOrder', `?orderNumber=${tgtOrder.orderNumber}`);
+            responses.push(response);
+        }
+        if(tgtOrders.count==0)
+        {
+            let pos=samcoApiCall('getPositions','');
+            let Lorder = pos.positionDetails.filter(pos => pos.netQuantity > 0 && pos.orderType=='L' 
+            && pos.tradingSymbol==order.tradingSymbol);
+            let slOrder = pos.positionDetails.filter(pos => pos.netQuantity > 0 && pos.orderType=='SL' 
+            && pos.tradingSymbol==order.tradingSymbol);
+            if(Lorder.count==1 && slOrder.count==0)
+            {
+                const order = {
+                    symbolName: Lorder[0].tradingSymbol,
+                    exchange: Lorder.exchange,
+                    transactionType: 'SELL',
+                    orderType: "MKT",//"MKT",
+                    quantity: pos.netQuantity.toString(),
+                    disclosedQuantity: "",
+                    orderValidity: "DAY",
+                    productType: "MIS",
+                    afterMarketOrderFlag: "NO"
+                };
+                let r=samcoApiCall('placeOrder',order);
+            }
+            if(Lorder.count>1 || slOrder.count>0){}  //TODO
 
 if (!positionsResponse.positionDetails || positionDetail.length === 0) {
-return res.status(500).send({ error: 'Failed to retrieve positions or all positions have zero net quantity' });
+  return res.status(500).send({ error: 'Failed to retrieve positions or all positions have zero net quantity' });
 }
 
-      }
-      responses.push(response);
-  }
+        }
+        responses.push(response);
+    }
 
-  // Respond with the data from placing the orders
-  res.status(200).send({ data: responses });
+    // Respond with the data from placing the orders
+    res.status(200).send({ data: responses });
+});
+//Done and tested
+app.post("/reverseNegativePositions", async (req, res) => {
+
+    // Call an API endpoint to get current positions
+    let positionsResponse = await samcoApiCall('getPositions', '');
+    let positionDetail = positionsResponse.positionDetails.filter(pos => pos.netQuantity > 0);
+
+if (!positionsResponse.positionDetails || positionDetail.length === 0) {
+    return res.status(500).send({ error: 'Failed to retrieve positions or all positions have zero net quantity' });
+}
+
+    // Get the list of stocks from the request query, if provided
+    let requestedStocks = getStrArray(req.query.stocks);
+    // Filter for negative positions, and only for requested stocks if provided
+
+    cl(positionDetail.map(pos => pos.markToMarketPrice));
+    let negativePositions = positionDetail.filter(position => {
+        let price = Number(position.markToMarketPrice.replace(/,/g, ''));
+        return (price < 0 && (!requestedStocks || requestedStocks.includes(position.tradingSymbol)));
+    });
+    
+    // Prepare a place to collect responses from reversing positions
+    let responses = [];
+    // Iterate over the negative positions
+    for (let position of negativePositions) {
+        // Define the order, based on the position
+        let order = {
+            symbolName: position.tradingSymbol,
+            exchange: position.exchange,
+            transactionType: position.transactionType === 'BUY' ? 'SELL' : 'BUY',  // Reverse the transaction type
+            orderType: 'MKT',  // Market order to ensure the order is filled
+            quantity: position.netQuantity.toString(),
+            orderValidity: 'DAY',
+            productType: 'MIS',
+            afterMarketOrderFlag: 'NO'
+        };
+
+        // If the exchange is NSE or BSE, double the quantity
+        if (position.exchange === 'NSE' || position.exchange === 'BSE') {
+            order.quantity = (2 * parseInt(order.quantity)).toString();
+        }
+
+        //Call the API to place the order
+        let orderResponse = await samcoApiCall('placeOrder', order);
+        cl(orderResponse);
+        responses.push(orderResponse);
+
+        // If the exchange is NFO and the symbol ends with ...CE or ...PE, reverse the trade
+        if (position.exchange === 'NFO' && (position.tradingSymbol.endsWith('CE') || position.tradingSymbol.endsWith('PE'))) {
+            // Change ...CE to ...PE or vice versa
+            let newSymbolName = position.tradingSymbol.endsWith('CE') ? position.tradingSymbol.replace('CE', 'PE') : position.tradingSymbol.replace('PE', 'CE');
+
+            // Create a new order to buy the opposite option
+            let newOrder = {
+                ...order,
+                symbolName: newSymbolName,
+                transactionType: 'BUY'
+            };
+
+            // Call the API to place the new order
+            let newOrderResponse = await samcoApiCall('placeOrder', newOrder);
+            cl(newOrderResponse);
+            responses.push(newOrderResponse);
+        }
+    }
+
+    // Respond with the data from placing the orders
+    res.status(200).send({ data: responses });
+});
+//Done and tested
+app.get("/chartInkSyncSamcoSymbols",async (req,res) => {
+    const CSV_URL = 'https://developers.stocknote.com/doc/ScripMaster.csv';
+    const CSV_FILE_PATH = './data.csv';
+    const MONGODB_URI = 'mongodb+srv://tradinguser:RwrqxxtEQENHHwkt@cluster0.mn5vihj.mongodb.net'; 
+    const DB_NAME = 'tradingdb'; 
+    const COLLECTION_NAME = 'SamcoSymbolData'; 
+
+    const pipelineAsync = promisify(pipeline);
+
+    try {
+        const startTime = new Date();
+    
+        console.log('Requesting CSV data...');
+        const response = await axios({ url: CSV_URL, method: 'GET', responseType: 'stream' });
+        console.log('CSV data received.');
+    
+        console.log('Writing CSV data to file...');
+        await pipelineAsync(response.data, fs.createWriteStream(CSV_FILE_PATH));
+        console.log('CSV data written to file.');
+    
+        console.log('Connecting to MongoDB...');
+        const db = await dbConnect();
+        const collection = db.collection(COLLECTION_NAME);
+    
+        // console.log('Deleting old data...');
+        // await collection.deleteMany({});
+        // console.log('Old data deleted.');
+
+        console.log('Dropping old collection...');
+        await db.collection(COLLECTION_NAME).drop();
+        console.log('Old collection dropped.');
+    
+        console.log('Reading CSV data from file...');
+        let data = [];
+        await pipelineAsync(
+            fs.createReadStream(CSV_FILE_PATH),
+            csv()
+                .on('data', (row) => {
+                    data.push({
+                        insertOne: {
+                            document: row
+                        }
+                    });
+                })
+        );
+    
+        console.log(`CSV contains ${data.length} rows.`);
+    
+        if (data.length > 0) {
+            console.log('Inserting new data...');
+            await collection.bulkWrite(data);
+            console.log('Data inserted successfully.');
+        }
+    
+        await client.close();
+    
+        const endTime = new Date();
+        const timeTaken = endTime - startTime;
+        const timeTakenSeconds = Math.floor((timeTaken / 1000) % 60);
+        const timeTakenMinutes = Math.floor((timeTaken / (1000 * 60)) % 60);
+    
+        console.log(`Total time taken: ${timeTakenMinutes} minutes and ${timeTakenSeconds} seconds.`);
+    } catch (error) {
+        console.error(`Error occurred: ${error}`);
+    }
+    
 });
 
+async function upsertDBlog(collectionName, req,filter) {
+    try {
+        const db = await dbConnect();
+        const collection = db.collection(collectionName);
+        const query = (filter)?filter:{};
+        if(!req) return 'object is blank';
+        req.time=new Date();
+        const update = { $set: req};
+        const options = { upsert: true };
+        let x = await collection.updateOne(query, update, options);
+        if (x.upsertedCount > 0) return cl(x.upsertedId.toHexString());     
+       else if(x.modifiedCount > 0) return cl(x.modifiedCount +' documents were modified');
+       else   return cl("No documents were upserted.");
+       
+      } catch (ex) {
+        console.log(ex);
+        return ex;
+      }
+}
+async function getSymbolDetail(samcoSymbol) {
+  const db = await dbConnect();
+  const collection = db.collection('SamcoSymbolData');
+  const data = await collection.findOne({ tradingSymbol: samcoSymbol });
+  //console.log(data);
+  return data;
+}
+
+async function findFromDB(collectionName, filter, returnField) {
+    try {
+        const db = await dbConnect();
+        if (!collectionName) throw new Error('collection not defined');
+        filter = filter || {};
+        const collection = db.collection(collectionName);
+        const document = await collection.findOne(filter);
+        if (returnField && document) {
+            return _.get(document, returnField);
+        } else {
+            return document;
+        }
+    } catch (err) {
+        console.error(err);
+        return null;
+    }
+}
+
+async function getConfigFromDB(type) {
+  const db = await dbConnect();
+  const collection = db.collection('TradingConfig');
+  const data = await collection.findOne({type:type});
+  //console.log(data);
+  return data.config;
+}
 async function samcoApiCall(ApiName, ReqData) {
   console.log('samcoApiCall', ApiName);
 //   cl(isPapertrade);
@@ -354,26 +744,146 @@ async function samcoApiCall(ApiName, ReqData) {
     console.error(`Error: ${error}`);
     throw error;
   }
-}                                                                                                                                                                                                 
+}
+async function samcoApiPapertrade(ApiName,ReqData){
+    console.log('samcoApiPapertrade', ApiName);
+    
+    const db = await dbConnect();
+    const orderCollection = db.collection('Orders');
+    
+    const userLimitsCollection = db.collection('UserLimits');
+    const positionsCollection = db.collection('Positions');
 
-// Route for 'long'
-app.get('/long', (req, res) => {
-  res.json({ message: 'This is the long API response.' });
-});
+    if (ApiName == 'getQuote' || ApiName == 'optionChain') {
+        if (sn.snapi.sessionToken == undefined) await loginSamco({});
+        const headers = {
+        'Content-Type': 'application/json',
+        'x-session-token': sn.snapi.sessionToken
+        };
+        let url = 'https://api.stocknote.com';
+        try {
+        let response = {};
+        if (ApiName == 'getQuote') response = await axios.get(url + '/quote/' + ApiName + ReqData, { headers: headers });
+        else if (ApiName == 'optionChain') response = await axios.get(url + '/option/' + ApiName + ReqData, { headers: headers });
+        return response.data;
+        } catch (error) {
+        console.error(`Error: ${error}`);
+        throw error;
+        }
+    }
 
-// Route for 'short'
-app.get('/short', (req, res) => {
-  res.json({ message: 'This is the short API response.' });
-});
+    else if (ApiName == 'placeOrder' || ApiName == 'getLimits' || ApiName == 'getPositions') {
+        try {
+        let response = {};
 
-// Route for 'long close'
-app.get('/longclose', (req, res) => {
-  res.json({ message: 'This is the long close API response.' });
-});
+        switch (ApiName) {
+            case 'placeOrder':
+  {
+    const newOrder = ReqData;
 
-// Route for 'short close'
-app.get('/shortclose', (req, res) => {
-  res.json({ message: 'This is the short close API response.' });
-});
+    // Validate newOrder fields
+    if (!newOrder.price || !newOrder.quantity || !newOrder.userId || !newOrder.symbolName) {
+      throw new Error('Missing required order fields');
+    }
+
+    // Insert new order
+    const orderResult = await orderCollection.insertOne(newOrder);
+
+    const price = newOrder.price;
+    const totalValue = newOrder.quantity * price;
+
+    // Check if user has enough funds and update user limit
+    const updateResult = await userLimitsCollection.updateOne(
+      { userId: newOrder.userId, $expr: { $gte: ["$cashLimit - $usedLimit", totalValue] } }, 
+      { $inc: { usedLimit: totalValue } }
+    );
+
+    if (updateResult.matchedCount === 0) {
+      throw new Error('Not enough funds');
+    }
+
+    // Update user position
+    const userPosition = await positionsCollection.findOne({ userId: newOrder.userId, symbolName: newOrder.symbolName }) || { quantity: 0, averagePrice: 0 };
+    const updatedQuantity = userPosition.quantity + newOrder.quantity;
+    const updatedAveragePrice = (userPosition.averagePrice * userPosition.quantity + price * newOrder.quantity) / updatedQuantity;
+
+    await positionsCollection.updateOne(
+      { userId: newOrder.userId, symbolName: newOrder.symbolName }, 
+      { $set: { quantity: updatedQuantity, averagePrice: updatedAveragePrice } }, 
+      { upsert: true }
+    );
+
+    response = { orderStatus: 'success', orderId: orderResult.insertedId };
+  }
+  break;
+
+
+            case 'getLimits':
+              {let userLimits = await userLimitsCollection.findOne({ userId: ReqData.userId });
+              response = userLimits || { error: 'User not found' };}
+              break;
+        
+            case 'getPositions':
+              let positions = await positionsCollection.find({ userId: ReqData.userId }).toArray();
+        
+              for (let position of positions) {
+                  let currentPriceData = await samcoApiCall('getQuote', {symbolName: position.symbolName});
+                  position.currentPrice = currentPriceData.closeValue;
+                  position.currentValue = position.currentPrice * position.quantity;
+              }
+              response=positions;
+            // Save the position data to the database
+            await positionsCollection.updateOne({userId: ReqData.userId, symbolName: position.symbolName}, {$set: position}, {upsert: true});
+            break;
+            case  'getAllPositions':
+                {
+                    let response = {};
+                    let positions = await positionsCollection.find({ userId: ReqData.userId }).toArray();
+                    response = positions;
+                }
+                break;
+
+        }
+
+        return response;
+        } catch (error) {
+        console.error(`Error: ${error}`);
+        throw error;
+        }
+    }
+}
+function chkeq(val,checkval){
+    if(!(val && checkval && typeof val === typeof checkval)) return false;
+    if (typeof val === 'string') return val.toLowerCase() === checkval.toLowerCase();
+    else return val === checkval;
+}
+function cl(r){console.log(r); return r;}
+async function loginSamco(req) {
+    //console.log("inside login samco");
+    const logindata = {
+        body: {
+            "userId": "DB34326",
+            "password": "pAncy@1988",
+            "yob": "1989",
+        },
+    };
+    let data = await sn.snapi.userLogin(logindata);
+   // console.log(data);
+    data = await JSON.parse(data);
+    await sn.snapi.setSessionToken(data.sessionToken);
+    console.log(sn.snapi.sessionToken);
+    return data;
+}
+function getStrArray(val)
+{   if(!val) return '';
+    if (val.includes('[') && val.includes(']')) {
+        let stocksString = val.replace('[', '').replace(']', ''); // removes brackets
+        return stocksString.split(","); // splits into array
+    } else {
+        // It's a single value, not an array
+        stocks.push(val);
+        return stocks;
+    }
+}
 
 export default app;
