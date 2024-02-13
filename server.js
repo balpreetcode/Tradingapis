@@ -664,25 +664,25 @@ app.get("/chartInkSyncSamcoSymbols",async (req,res) => {
     
 });
 
-async function upsertDBlog(collectionName, req,filter) {
-    try {
-        const db = await dbConnect();
-        const collection = db.collection(collectionName);
-        const query = (filter)?filter:{};
-        if(!req) return 'object is blank';
-        req.time=new Date();
-        const update = { $set: req};
-        const options = { upsert: true };
-        let x = await collection.updateOne(query, update, options);
-        if (x.upsertedCount > 0) return cl(x.upsertedId.toHexString());     
-       else if(x.modifiedCount > 0) return cl(x.modifiedCount +' documents were modified');
-       else   return cl("No documents were upserted.");
+// async function upsertDBlog(collectionName, req,filter) {
+//     try {
+//         const db = await dbConnect();
+//         const collection = db.collection(collectionName);
+//         const query = (filter)?filter:{};
+//         if(!req) return 'object is blank';
+//         req.time=new Date();
+//         const update = { $set: req};
+//         const options = { upsert: true };
+//         let x = await collection.updateOne(query, update, options);
+//         if (x.upsertedCount > 0) return cl(x.upsertedId.toHexString());     
+//        else if(x.modifiedCount > 0) return cl(x.modifiedCount +' documents were modified');
+//        else   return cl("No documents were upserted.");
        
-      } catch (ex) {
-        console.log(ex);
-        return ex;
-      }
-}
+//       } catch (ex) {
+//         console.log(ex);
+//         return ex;
+//       }
+// }
 async function getSymbolDetail(samcoSymbol) {
   const db = await dbConnect();
   const collection = db.collection('SamcoSymbolData');
@@ -857,7 +857,7 @@ function chkeq(val,checkval){
     if (typeof val === 'string') return val.toLowerCase() === checkval.toLowerCase();
     else return val === checkval;
 }
-function cl(r){console.log(r); return r;}
+//function cl(r){console.log(r); return r;}
 async function loginSamco(req) {
     //console.log("inside login samco");
     const logindata = {
