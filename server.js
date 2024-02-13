@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import sn from "stocknotejsbridge";
 import { MongoClient } from "mongodb";
 import { randomUUID } from "crypto";
+import cron from "node-cron";
 const app = express();
 const PORT = process.env.PORT || 5001;
 const uri = "mongodb+srv://balpreet:ct8bCW7LDccrGAmQ@cluster0.2pwq0w2.mongodb.net/tradingdb";
@@ -55,6 +56,20 @@ async function upsertDBlog(collectionName, req,filter) {
       return ex;
     }
 }
+
+let crontask={};
+app.get("/startcron", async (req, res) => {
+crontask = cron.schedule('*/5 * * * * *', () =>  {
+ console.log('running a task every 5 seconds', new Date().toLocaleTimeString());
+    // closeTradesIfProfitOrLoss(10,-20);
+});    res.status(200).send({ data: "started" });
+});
+
+app.get("/endcron", async (req, res) => {
+//CronJob Start
+ crontask.stop();
+    res.status(200).send({ data: "stopped" });
+});
 
 app.get("/", (req, res) => {
   res.send("Welcome to the API!v2");
@@ -595,6 +610,44 @@ if (!positionsResponse.positionDetails || positionDetail.length === 0) {
     // Respond with the data from placing the orders
     res.status(200).send({ data: responses });
 });
+
+/**
+ * Closes trades if the total profit is greater than a specified maximum profit or the loss is less than a specified maximum loss.
+ * @param {Array} positions - The current positions.
+ * @param {number} maxProfit - The maximum profit threshold.
+ * @param {number} maxLoss - The maximum loss threshold.
+ * @returns {Promise<void>} - A promise that resolves when all trades are closed.
+ */
+async function closeTradesIfProfitOrLoss(maxProfit,maxLoss) {
+    try {
+        // Call an API endpoint to get current positions
+        let totalProfitLoss= await getSamcoTotalProfitLoss();
+       
+        await upsertDBlog("PnL", { date:new Date().getDate ,time: new Date().toLocaleTimeString, profitLoss: totalProfitLoss });
+        // Check if the total profit is greater than 10 or the loss is less than -2
+        if (totalProfitLoss > maxProfit || totalProfitLoss < maxLoss) {
+            // Iterate over the positions and close all trades
+            for (let pos of positionDetail) {
+             let r= await placeSamcoMISOrder(pos.tradingSymbol, pos.exchange, pos.transactionType === 'BUY' ? 'SELL' : 'BUY', pos.netQuantity);
+             }
+        }
+    } catch (error) {
+        console.log(error);
+    }
+}
+async function getSamcoTotalProfitLoss() {
+    let positionsResponse = await samcoApiCall('getPositions', '');
+    let positionDetail = positionsResponse.positionDetails;
+
+    // Calculate the total profit or loss
+    let totalProfitLoss = positionDetail.reduce((acc, position) => {
+        let price = Number(position.markToMarketPrice.replace(/,/g, ''));
+        let quantity = Number(position.netQuantity);
+        let profitLoss = price * quantity;
+        return acc + profitLoss;
+    }, 0);
+    return totalProfitLoss;
+}
 //Done and tested
 app.get("/chartInkSyncSamcoSymbols",async (req,res) => {
     const CSV_URL = 'https://developers.stocknote.com/doc/ScripMaster.csv';
@@ -716,6 +769,25 @@ async function getConfigFromDB(type) {
   //console.log(data);
   return data.config;
 }
+
+async function placeSamcoMISOrder(position){
+    let order = {
+        symbolName: position.tradingSymbol,
+        exchange: position.exchange,
+        transactionType: position.transactionType === 'BUY' ? 'SELL' : 'BUY',
+        orderType: 'MKT',
+        quantity: position.netQuantity.toString(),
+        orderValidity: 'DAY',
+        productType: 'MIS',
+        afterMarketOrderFlag: 'NO'
+    };
+
+    // Call the API to place the order to close the trade
+    let response = await samcoApiCall('placeOrder', order);
+    cl(response);
+    return response;
+}
+
 async function samcoApiCall(ApiName, ReqData) {
   console.log('samcoApiCall', ApiName);
 //   cl(isPapertrade);
