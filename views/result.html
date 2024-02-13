@@ -1,10 +1,113 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Trade Result</title>
+  <title>Trading Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    /* Add your CSS styles here */
+  </style>
 </head>
 <body>
-  <h1>Trade Result</h1>
-  <!-- Display the result of the trade here -->
+  <select id="dateDropdown">
+    <!-- Options will be populated by JavaScript -->
+  </select>
+
+  <table id="positionsTable">
+    <!-- Table data will be populated by JavaScript -->
+  </table>
+
+  <div id="pnlGraph">
+    <!-- Graph will be populated by JavaScript -->
+  </div>
+
+  <button id="toggleOrderBook">Toggle Order Book</button>
+
+  <table id="orderBookTable" style="display: none;">
+    <!-- Table data will be populated by JavaScript -->
+  </table>
+
+  <textarea id="terminal" readonly>
+    <!-- Terminal output will be populated by JavaScript -->
+  </textarea>
+
+  <script src="script.js"></script>
+  <script>
+    // Fetch dates and populate dropdown
+    fetch('/api/dates')
+      .then(response => response.json())
+      .then(dates => {
+        const dropdown = document.getElementById('dateDropdown');
+        dates.forEach(date => {
+          const option = document.createElement('option');
+          option.value = date;
+          option.text = date;
+          dropdown.add(option);
+        });
+      });
+  
+    // Filter positions and order book based on selected date
+    const dateDropdown = document.getElementById('dateDropdown');
+    dateDropdown.addEventListener('change', () => {
+      const selectedDate = dateDropdown.value;
+      
+      // Clear existing positions and order book data
+      const positionsTable = document.getElementById('positionsTable');
+      positionsTable.innerHTML = '';
+      
+      const orderBookTable = document.getElementById('orderBookTable');
+      orderBookTable.innerHTML = '';
+      
+      // Fetch filtered positions and populate table
+      fetch(`/api/positions?date=${selectedDate}`)
+        .then(response => response.json())
+        .then(positions => {
+          positions.forEach(position => {
+            const row = positionsTable.insertRow();
+            const cell = row.insertCell();
+            cell.textContent = position;
+          });
+        });
+        // Fetch PnL data and populate graph
+    // This is a placeholder - you'll need to use a library like Chart.js or D3.js to create the graph
+    fetch(`/api/pnl?date=${selectedDate}`)
+  .then(response => response.json())
+  .then(pnlData => {
+    const ctx = document.getElementById('pnlGraph').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: pnlData.map(item => item.time), // Assuming each item has a 'time' property
+        datasets: [{
+          label: 'PnL',
+          data: pnlData.map(item => item.ProfitLoss), // Assuming each item has a 'ProfitLoss' property
+          fill: false,
+          borderColor: 'rgb(75, 192, 192)',
+          tension: 0.1
+        }]
+      },
+      options: {
+        scales: {
+          x: {
+            type: 'time',
+            time: {
+              unit: 'minute'
+            }
+          }
+        }
+      }
+    });
+  });
+      // Fetch filtered order book and populate table
+      fetch(`/api/orderBook?date=${selectedDate}`)
+        .then(response => response.json())
+        .then(orderBook => {
+          orderBook.forEach(order => {
+            const row = orderBookTable.insertRow();
+            const cell = row.insertCell();
+            cell.textContent = order;
+          });
+        });
+    });
+  </script>
 </body>
 </html>
