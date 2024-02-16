@@ -8,6 +8,10 @@ import { randomUUID } from "crypto";
 import axios from "axios";
 import {Spreadsheets} from "./config.js";
 import schedule from "node-schedule";
+import { promisify } from "util";
+import { pipeline } from 'stream';
+import fs from 'fs';
+const pipelineAsync = promisify(pipeline);
 let job;
 import cron from "node-cron";
 import { start } from "repl";
@@ -45,13 +49,56 @@ app.post("/testChartinkPlaceOrder", async (req, res) => {
     const stocks = req.body.stocks.split(",");
      let Alerts = stocks.map(stock => ({"Stock": stock,"Date": new Date().toISOString().split('T')[0],"Time": new Date().toISOString()}));  
       await multipleInsertDB('Alerts',Alerts);
-  let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks);  
-    console.log(CEsymbol,PEsymbol,exchange,quantityInLots);
-     let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
-    //startcron(); 
-    res.status(200).send({ data: "returned" });   });/*    
-});
-*/
+
+   await buySamcoMISOrder(stocks[0])
+
+
+//   let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks);  
+//     console.log(CEsymbol,PEsymbol,exchange,quantityInLots);
+//      let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
+//     //startcron(); 
+    res.status(200).send({ data: "returned" });   });
+
+    async function buySamcoMISOrder(stock) {
+        let limitResponse = await samcoApiCall('getLimits','');
+        let lmt=limitResponse.equityLimit.grossAvailableMargin;
+        const stockdetail = await getSymbolDetail(stock);
+        
+        let order = {
+            symbolName: stock,
+            exchange: stock.exchange,
+            transactionType: 'BUY',
+            orderType: 'MKT',
+            quantity: '1',
+            orderValidity: 'DAY',
+            productType: 'MIS',
+            afterMarketOrderFlag: 'NO'
+        };
+    
+        // Call the API to place the order to close the trade
+        let response = await samcoApiCall('placeOrder', order);
+        let limitResponse2 = await samcoApiCall('getLimits','');
+       
+        //wait for 3 seconds
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        let lmt2=limitResponse.equityLimit.grossAvailableMargin;
+        priceperstock=lmt2-lmt;
+
+        stocksPurchaseCount= Math.floor(lmt2/priceperstock);
+        let order2 = {
+            symbolName: stock,
+            exchange: exchange,
+            transactionType: 'BUY',
+            orderType: 'MKT',
+            quantity: stocksPurchaseCount,
+            orderValidity: 'DAY',
+            productType: 'MIS',
+            afterMarketOrderFlag: 'NO'
+        };
+        let response2 = await samcoApiCall('placeOrder', order2);
+    }
+
 async function closeTradesIfProfitOrLoss() {
     
     if(CurrentTimeOver(15,30)){console.log('endcron');} else
@@ -899,7 +946,7 @@ async function getSamcoTotalProfitLoss(maxPercentProfit,maxPercentLoss) {
 app.get("/chartInkSyncSamcoSymbols",async (req,res) => {
     const CSV_URL = 'https://developers.stocknote.com/doc/ScripMaster.csv';
     const CSV_FILE_PATH = './data.csv';
-    const MONGODB_URI = 'mongodb+srv://tradinguser:RwrqxxtEQENHHwkt@cluster0.mn5vihj.mongodb.net'; 
+  //  const MONGODB_URI = 'mongodb+srv://tradinguser:RwrqxxtEQENHHwkt@cluster0.mn5vihj.mongodb.net'; 
     const DB_NAME = 'tradingdb'; 
     const COLLECTION_NAME = 'SamcoSymbolData'; 
 
