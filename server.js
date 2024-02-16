@@ -1,4 +1,4 @@
-import express from "express";
+import express, { response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { google } from "googleapis";
@@ -7,6 +7,8 @@ import { MongoClient } from "mongodb";
 import { randomUUID } from "crypto";
 import axios from "axios";
 import {Spreadsheets} from "./config.js";
+import schedule from "node-schedule";
+let job;
 import cron from "node-cron";
 import { start } from "repl";
 const app = express();
@@ -17,73 +19,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 dotenv.config();
 app.use(cors());
-
-
- app.post("/testChartinkPlaceOrder", async (req, res) => {
-    const cIId = await db.collection('chartInkCalls').insertOne(req.body);
-    await upsertDBlog();
-    const stocks = req.body.stocks.split(",");
-    let Alerts = stocks.map(stock => ({"Stock": stock,"Date": new Date().toISOString().split('T')[0],"Time": new Date().toISOString()}));  
-     await multipleInsertDB('Alerts',Alerts);
-     let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks[0]);  
-
-     let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
-    startcron(); 
-});
-async function closeTradesIfProfitOrLoss() {
-    try {
-         if(CurrentTimeOver(15,30)) {console.log('endcron()'); endcron();}
-
-        let positionsResponse = await samcoApiCall('getPositions', '');
-        let orders = await samcoApiCall('orderBook', '');
-    
-        let Positions = positionsResponse.positionDetails.map(position => {
-            return {
-              "Stocks": position.tradingSymbol,
-              "Date": new Date().toISOString().split('T')[0],
-              "Time": new Date().toISOString(),
-              "Bought Price": position.averageBuyPrice,
-              "Current Price": position.lastTradedPrice,
-              "Pnl": position.unrealizedGainAndLoss,
-              "Status": "Open"
-            }});
-        let Orders = orders.orderBookDetails.map(order => {
-                return {
-                  "Stocks": order.tradingSymbol,
-                  "Date": new Date().toISOString().split('T')[0],
-                  "Time": new Date().toISOString(),
-                  "Price": order.orderPrice,
-                  "Status": order.orderStatus
-                }});
-        await multipleInsertDB('Positions',Positions);
-        await multipleInsertDB('Orders',Orders);
-
-        
-        // Call an API endpoint to get current positions
-        let {pnl,positionDetail,maxProfit,maxLoss}= await getSamcoTotalProfitLoss();
-       console.log(pnl,maxProfit,maxLoss);
-        await upsertDBlog("PnL", { date:new Date().getDate ,time: new Date().toLocaleTimeString, profitLoss: pnl });
-        // Check if the total profit is greater than 10 or the loss is less than -2
-        if (pnl > maxProfit || pnl < maxLoss) {
-            // Iterate over the positions and close all trades
-            for (let pos of positionDetail) {
-             let r= await placeSamcoMISOrder(pos.tradingSymbol, pos.exchange, pos.transactionType === 'BUY' ? 'SELL' : 'BUY', pos.netQuantity);
-             }
-        }
-    } catch (error) {
-        console.log(error);
-    }
-}
-function startcron()
-{
-    crontask = cron.schedule('*/5 * * * * *', () =>  {
-    console.log('running a task every 5 seconds', new Date().toLocaleTimeString());
-     closeTradesIfProfitOrLoss();
-}); 
-}
-function endcron(){
-    crontask.stop();
-}
+let count=0;
 function CurrentTimeOver(hrs,mins){
     const currentTime = new Date();
         const currentHour = currentTime.getHours();
@@ -91,6 +27,77 @@ function CurrentTimeOver(hrs,mins){
 
         return (currentHour > hrs || (currentHour === hrs && currentMinute >= mins))
 }
+async function startcron() {
+    job = schedule.scheduleJob('*/20 * * * * *',async function(){
+        console.log('This runs every 20 seconds.');
+        console.log(count);
+        await closeTradesIfProfitOrLoss(job);
+      });
+}
+function endcron() {
+    job.cancel();
+    console.log('The scheduled job has been cancelled.');
+}
+app.post("/testChartinkPlaceOrder", async (req, res) => {
+//    closeTradesIfProfitOrLoss(); return;
+  
+   upsertDBlog('chartInkCalls', req.body, {uid:randomUUID()});
+    const stocks = req.body.stocks.split(",");
+     let Alerts = stocks.map(stock => ({"Stock": stock,"Date": new Date().toISOString().split('T')[0],"Time": new Date().toISOString()}));  
+      await multipleInsertDB('Alerts',Alerts);
+  let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks[0]);  
+    //console.log(CEsymbol,PEsymbol,exchange,quantityInLots);
+     let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
+    startcron(); 
+    res.status(200).send({ data: "returned" });   });/*    
+});
+*/
+async function closeTradesIfProfitOrLoss() {
+    
+    if(CurrentTimeOver(15,30)) { console.log('endcron'); endcron();}
+        try {
+            await deleteAllDataFromCollection('Positions');
+            await deleteAllDataFromCollection('Orders');
+        let positionsResponse = await samcoApiCall('getPositions', '');
+        let orders = await samcoApiCall('orderBook', '');
+        let Positions = positionsResponse.positionDetails.map(position => {
+            return {
+              "Stock": position.tradingSymbol,
+              "Date": new Date().toISOString().split('T')[0],
+              "Time": new Date().toISOString(),
+              "Bought Price": position.averageBuyPrice,
+              "Current Price": position.lastTradedPrice,
+              "Pnl": position.unrealizedGainAndLoss,
+              "Status": "Open"
+}});
+        let Orders = orders.orderBookDetails.map(order => {
+                return {
+                  "Stock": order.tradingSymbol,
+                  "Date": new Date().toISOString().split('T')[0],
+                  "Time": new Date().toISOString(),
+                  "Price": order.orderPrice,
+                  "Status": order.orderStatus
+                }});
+        await multipleInsertDB('Positions',Positions);
+        await multipleInsertDB('Orders',Orders);
+        
+        // Call an API endpoint to get current positions
+    //     let {pnl,positionDetail,maxProfit,maxLoss}= await getSamcoTotalProfitLoss();
+    //    console.log(pnl,maxProfit,maxLoss);
+    //     await upsertDBlog("PnL", { date:new Date().getDate ,time: new Date().toLocaleTimeString, profitLoss: pnl });
+    //     // Check if the total profit is greater than 10 or the loss is less than -2
+    //     if (pnl > maxProfit || pnl < maxLoss) {
+    //         // Iterate over the positions and close all trades
+    //         for (let pos of positionDetail) {
+    //          let r= await placeSamcoMISOrder(pos.tradingSymbol, pos.exchange, pos.transactionType === 'BUY' ? 'SELL' : 'BUY', pos.netQuantity);
+    //          }
+    //     }
+    } catch (error) {
+        console.log(error);
+    }
+}
+let crontask; // Define crontask in a scope accessible to both functions
+
 //getTradingData({Date: '2022-03-01'});
 async function getTradingData(Date)
 {
@@ -101,7 +108,7 @@ async function getTradingData(Date)
 
   let Positions = positionsResponse.positionDetails.map(position => {
       return {
-        "Stocks": position.tradingSymbol,
+        "Stock": position.tradingSymbol,
         "Date": new Date().toISOString().split('T')[0],
         "Time": new Date().toISOString(),
         "Bought Price": position.averageBuyPrice,
@@ -111,7 +118,7 @@ async function getTradingData(Date)
       }});
   let Orders = orders.orderBookDetails.map(order => {
           return {
-            "Stocks": order.tradingSymbol,
+            "Stock": order.tradingSymbol,
             "Date": new Date().toISOString().split('T')[0],
             "Time": new Date().toISOString(),
             "Price": order.orderPrice,
@@ -236,7 +243,7 @@ async function getSpreadsheetData(spreadsheetId, range) {
     }
 }
 let reqdata={
-  "stocks": "BIKAJI,LATENTVIEW,LTIM,SHOPERSTOP,HONAUT,BAJAJELEC",
+  "Stocks": "BIKAJI,LATENTVIEW,LTIM,SHOPERSTOP,HONAUT,BAJAJELEC",
   "trigger_prices": "414.05,347,5062.3,812.7,42368.2,1271.45",
   "triggered_at": "10:25 am",
   "scan_name": "15 minute Stock Breakouts",
@@ -281,13 +288,7 @@ async function upsertDBlog(collectionName, req,filter) {
 //getOptionwithMaxVolume('NIFTY');
 
 async function getOptionwithMaxVolume(symbol) {
-
-//  let optionsDt = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${symbol}`);
-//  let symbolDet = await samcoApiCall('eqDervSearch',`?searchSymbolName=${symbol}`);
-// console.log(symbolDet);
-// return;
  let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${symbol}`);
-// console.log(optionsData.optionChainDetails);
 let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='';
 for (let detail of optionsData.optionChainDetails) {
     let volume = parseInt(detail.volume, 10);    
@@ -297,9 +298,7 @@ for (let detail of optionsData.optionChainDetails) {
         optionType=detail.optionType;
     }
 }
-//console.log(maxVolumeTradingSymbol,maxVolume,optionType);
 let symbolDetail = await samcoApiCall('eqDervSearch',`?exchange=NFO&searchSymbolName=${maxVolumeTradingSymbol}`);
-//console.log(symbolDetail);
 let CEsymbol='',PEsymbol='', exchange, quantityInLots;
 if(optionType=='CE')
   { 
@@ -312,23 +311,22 @@ if(optionType=='CE')
   } 
 
   exchange=symbolDetail.searchResults[0].exchange;
-  quantityInLots=symbolDetail.searchResults[0].quantityInLots;
+  quantityInLots=symbolDetail.searchResults[0].bodLotQuantity;
 let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == maxVolumeTradingSymbol);
-//console.log(optns);
 return {CEsymbol,PEsymbol,exchange,quantityInLots,symbolDetail,optionsData};
 }
 
 //testinsertSampleData();
 async function testinsertSampleData()
 {
-  let Alerts=[  {    "Stocks": "AAPL", "Date":"2022-03-01",   "Time": "2022-03-01T10:00:00Z"},  
-  {    "Stocks": "NIFTY", "Date":"2022-03-01",    "Time": "2022-03-01T10:00:00Z"}];
-    let Orders=[  {    "Stocks": "AAPL",    "Price": 150.00,"Date":"2022-03-01","Time": "2022-03-01T10:00:00Z",    "Status": "Completed"},  
-    {    "Stocks": "NIFTY",    "Price": 150.00, "Date":"2022-03-01","Time": "2022-03-01T10:00:00Z",    "Status": "Completed"},
-{    "Stocks": "BANKNIFTY",    "Price": 150.00,"Date":"2022-03-01",     "Time": "2022-03-01T10:00:00Z",    "Status": "Pending"},  
-{    "Stocks": "NIFTY",    "Price": 150.00,"Date":"2022-03-01",     "Time": "2022-03-01T10:00:00Z",    "Status": "Pending"}];
-let Positions=[  {    "Stocks": "AAPL", "Date":"2022-03-01",    "Bought Price": 140.00,    "Current Price": 150.00,    "Pnl": 10.00,    "Status": "Open"},  
-{    "Stocks": "NIFTY",    "Bought Price": 140.00, "Date":"2022-03-01",    "Current Price": 150.00,    "Pnl": 10.00,    "Status": "Open"}];
+  let Alerts=[  {    "Stock": "AAPL", "Date":"2022-03-01",   "Time": "2022-03-01T10:00:00Z"},  
+  {    "Stock": "NIFTY", "Date":"2022-03-01",    "Time": "2022-03-01T10:00:00Z"}];
+    let Orders=[  {    "Stock": "AAPL",    "Price": 150.00,"Date":"2022-03-01","Time": "2022-03-01T10:00:00Z",    "Status": "Completed"},  
+    {    "Stock": "NIFTY",    "Price": 150.00, "Date":"2022-03-01","Time": "2022-03-01T10:00:00Z",    "Status": "Completed"},
+{    "Stock": "BANKNIFTY",    "Price": 150.00,"Date":"2022-03-01",     "Time": "2022-03-01T10:00:00Z",    "Status": "Pending"},  
+{    "Stock": "NIFTY",    "Price": 150.00,"Date":"2022-03-01",     "Time": "2022-03-01T10:00:00Z",    "Status": "Pending"}];
+let Positions=[  {    "Stock": "AAPL", "Date":"2022-03-01",    "Bought Price": 140.00,    "Current Price": 150.00,    "Pnl": 10.00,    "Status": "Open"},  
+{    "Stock": "NIFTY",    "Bought Price": 140.00, "Date":"2022-03-01",    "Current Price": 150.00,    "Pnl": 10.00,    "Status": "Open"}];
 
 await multipleInsertDB('Alerts',Alerts);
 await multipleInsertDB('Orders',Orders);
@@ -363,7 +361,7 @@ function onSelectedDateChange(newDate) {
   updateSpreadsheetWithDBData(newDate);
 }
 
-let crontask={};
+
 app.get("/startcron", async (req, res) => {
 startcron();
     res.status(200).send({ data: "started" });
@@ -881,7 +879,6 @@ async function getSamcoTotalProfitLoss(maxPercentProfit,maxPercentLoss) {
     for (let detail of positionDetail) {
         totalNetPositionValue += parseFloat(detail.netPositionValue);
     }
-
     // Calculate the percentage of the total net position value
     let maxProfit = (totalNetPositionValue * maxPercentProfit) / 100;
     let maxLoss = (totalNetPositionValue * maxPercentLoss) / 100;
@@ -1064,8 +1061,7 @@ async function placeSamcoMISOrder(position){
 async function samcoApiCall(ApiName, ReqData) {
   console.log('samcoApiCall', ApiName);
 //   cl(isPapertrade);
-    if((await findFromDB('MasterConfig',{type:'isPapertrading'},'value'))) return samcoApiPapertrade(ApiName,ReqData);
-  if (sn.snapi.sessionToken == undefined) await loginSamco({});
+    if (sn.snapi.sessionToken == undefined) await loginSamco({});
   const headers = {
     'Content-Type': 'application/json',
     'x-session-token': sn.snapi.sessionToken
@@ -1078,16 +1074,16 @@ async function samcoApiCall(ApiName, ReqData) {
     if (ApiName == 'placeOrder') response = await axios.post(url + '/order/' + ApiName, ReqData, { headers: headers });
     else if (ApiName == 'getQuote') response = await axios.get(url + '/quote/' + ApiName + ReqData, { headers: headers });
     else if (ApiName == 'getLimits') response = await axios.get(url + '/limit/' + ApiName + ReqData, { headers: headers });
-    else if (ApiName == 'optionChain') response = await axios.get(url + '/option/' + ApiName + ReqData, { headers: headers });
+    else if (ApiName == 'optionChain')response = await axios.get(url + '/option/' + ApiName + ReqData, { headers: headers });
     else if (ApiName == 'getPositions') response = await axios.get(url + '/position/' + ApiName + '?positionType=DAY' + ReqData, { headers: headers });
     else if (ApiName == 'orderBook') response = await axios.get(url + '/order/' + ApiName + ReqData, { headers: headers });
     else if (ApiName == 'cancelOrder') response = await axios.delete(url + '/order/' + ApiName + ReqData, { headers: headers });
     else if (ApiName == 'eqDervSearch') response = await axios.get(url + '/eqDervSearch/search' + ReqData, { headers: headers });
     https://api.stocknote.com/eqDervSearch/search?searchSymbolName=INFY    
-   // console.log(response.data);
+  //  console.log(response.data);
     return response.data;
   } catch (error) {
-    console.error(`Error: ${error}`);
+    console.error(`Error: `);
     throw error;
   }
 }
@@ -1217,7 +1213,6 @@ async function loginSamco(req) {
    // console.log(data);
     data = await JSON.parse(data);
     await sn.snapi.setSessionToken(data.sessionToken);
-    console.log(sn.snapi.sessionToken);
     return data;
 }
 function getStrArray(val)
