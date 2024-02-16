@@ -46,6 +46,50 @@ export async function writeToSpreadsheet(spreadsheetId, range, value) {
         }
     });
 }
+export async function writeToSpreadsheetMultiple(spreadsheetId, range, values) {
+    const auth = new google.auth.GoogleAuth({
+        keyFile: "credentials.json",
+        scopes: "https://www.googleapis.com/auth/spreadsheets",
+    });
+
+    const client = await auth.getClient();
+    const googleSheets = google.sheets({ version: "v4", auth: client });
+
+    await googleSheets.spreadsheets.values.update({
+        auth,
+        spreadsheetId,
+        range,
+        valueInputOption: 'USER_ENTERED', // 'RAW' if you don't want to allow user to enter formula
+        resource: {
+            values: values
+        }
+    });
+}
+async function getSpreadsheetData(spreadsheetId, range) {
+    const auth = new google.auth.GoogleAuth({
+        keyFile: "credentials.json",
+        scopes: "https://www.googleapis.com/auth/spreadsheets",
+    });
+
+    const googleSheets = google.sheets({ version: "v4", auth: client });
+
+    //const authClient = await authorize(); // Your authorization function to get auth client
+
+    const request = {
+      spreadsheetId: spreadsheetId,
+      range: range,
+      auth: auth,
+    };
+  
+    try {
+      const response = await googleSheets.spreadsheets.values.get(request);
+      //console.log(response.data);
+      return response.data.values; // This will return the values in the specified range.
+    } catch (err) {
+      console.error(err);
+    }
+  }
+  
 
 let reqdata={
   "stocks": "BIKAJI,LATENTVIEW,LTIM,SHOPERSTOP,HONAUT,BAJAJELEC",
@@ -60,6 +104,17 @@ function cl(data) {
   console.log(data);
 }
 
+async function multipleInsertDB(collectionName, req) {
+    try {
+        const db = await dbConnect();
+        const collection = db.collection(collectionName);
+        const x = await collection.insertMany(req);
+        return x;
+    } catch (ex) {
+        console.log(ex);
+        return ex;
+    }
+    }
 async function upsertDBlog(collectionName, req,filter) {
   try {
       const db = await dbConnect();
@@ -107,65 +162,73 @@ let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == maxV
 return {optns:optns,symbolDetail:symbolDetail,optionType:optionType,maxVolumeTradingSymbol:maxVolumeTradingSymbol,maxVolume:maxVolume};
 } 
 
-//writeToSpreadsheet()
 
-async function writeToSpreadsheet()
+//testinsertSampleData();
+async function testinsertSampleData()
 {
-    let spreadsheetId = '1Z232JpS1wSLgquoDbjHfhRXHed-UlQIX6l6rw4RQ_ZY'; // Replace with your Spreadsheet ID
-    let range = 'Sheet1!A1'; // Replace with the range you want to update
-    let value = 'Hello, world!'; // Replace with the value you want to write
-    
-    writeToSpreadsheet(spreadsheetId, range, value);
+  let Alerts=[  {    "Stocks": "AAPL", "Date":"2022-03-01",   "Time": "2022-03-01T10:00:00Z"},  
+  {    "Stocks": "NIFTY", "Date":"2022-03-01",    "Time": "2022-03-01T10:00:00Z"}];
+    let Orders=[  {    "Stocks": "AAPL",    "Price": 150.00,"Date":"2022-03-01","Time": "2022-03-01T10:00:00Z",    "Status": "Completed"},  
+    {    "Stocks": "NIFTY",    "Price": 150.00, "Date":"2022-03-01","Time": "2022-03-01T10:00:00Z",    "Status": "Completed"},
+{    "Stocks": "BANKNIFTY",    "Price": 150.00,"Date":"2022-03-01",     "Time": "2022-03-01T10:00:00Z",    "Status": "Pending"},  
+{    "Stocks": "NIFTY",    "Price": 150.00,"Date":"2022-03-01",     "Time": "2022-03-01T10:00:00Z",    "Status": "Pending"}];
+let Positions=[  {    "Stocks": "AAPL", "Date":"2022-03-01",    "Bought Price": 140.00,    "Current Price": 150.00,    "Pnl": 10.00,    "Status": "Open"},  
+{    "Stocks": "NIFTY",    "Bought Price": 140.00, "Date":"2022-03-01",    "Current Price": 150.00,    "Pnl": 10.00,    "Status": "Open"}];
+
+await multipleInsertDB('Alerts',Alerts);
+await multipleInsertDB('Orders',Orders);
+await multipleInsertDB('Positions',Positions);
+
+}
+// deleteAllDataFromCollection('Alerts');
+// deleteAllDataFromCollection('Orders');
+// deleteAllDataFromCollection('Positions');
+async function deleteAllDataFromCollection(collectionName)
+{
+    const db = await dbConnect();
+    const collection = db.collection(collectionName);
+    const x = await collection.deleteMany({});
+    console.log(x.deletedCount + " documents deleted");
+    return x;
 }
 
+//getTradingData({Date: '2022-03-01'});
+async function getTradingData(Date)
+{
+  let db = await dbConnect();
+  let Alerts = await db.collection('Alerts').find(Date).toArray();
+  let Orders = await db.collection('Orders').find(Date).toArray();
+  let Positions = await db.collection('Positions').find(Date).toArray();
+  //console.log({Date:Date ,Alerts:Alerts,Orders:Orders,Positions:Positions});
+  return {Alerts:Alerts,Orders:Orders,Positions:Positions};
+} 
+app.get("/updateSpreadsheetWithDBData", async (req, res) => {
+await updateSpreadsheetWithDBData();
+res.status(200).send({ data: "updated" });
+});
 // This function is called when the selected date changes
-async function updateSpreadsheetWithDBData(newDate) {
+async function updateSpreadsheetWithDBData() {
+    const range = 'Sheet1!A2:E10'; // Update with the range you want to retrieve
+    let config=Spreadsheets.TradingSetup;
+
+// Call the function
+let dte= (await getSpreadsheetData(config.id, 'Sheet1!B1'))[0][0];
+console.log(dte);
   // Fetch data for each collection
-  const alertsData = await findFromDB('Alerts', {date: newDate});
-  const ordersData = await findFromDB('Orders',{date: newDate});
-  const positionsData = await findFromDB('Positions', {date: newDate});
-
+    let dt= await getTradingData({Date: dte});
+    console.log(dt);
   // Update the 'Alerts',Orders,Positions section of the spreadsheet
-  let config={id:'1Z232JpS1wSLgquoDbjHfhRXHed-UlQIX6l6rw4RQ_ZY',
-  sections:[
-      {name:'Alerts',columns:[{'Stocks':'A4'},{'Time':'B4'},]},
-      {name:'Orders',columns:[{'Stocks':'D4'},{'Price':'E4'},{'Time':'F4'},{'Status':'G4'}]},
-      {name:'Positions',columns:[{'Stocks':'I4'},{'Bought Price':'J4'},{'Current Price':'K4'},{'Pnl':'L4'},{'Status':'M4'}]},
-  ]
-  };
-  updateSpreadsheetSection(config.id, 'Alerts', config.sections[0].columns, alertsData);
-  updateSpreadsheetSection(config.id, 'Orders', config.sections[1].columns, ordersData);
-  updateSpreadsheetSection(config.id, 'Positions', config.sections[2].columns, positionsData);
-
+  updateSpreadsheetSection(config.id, config.sections[0].range , config.sections[0].columns, dt.Alerts);
+  updateSpreadsheetSection(config.id, config.sections[1].range, config.sections[1].columns, dt.Orders);
+  updateSpreadsheetSection(config.id, config.sections[2].range, config.sections[2].columns, dt.Positions);
 }
-
 
 // This function is called when the selected date changes
-function updateSpreadsheetSection(spreadsheetId, sectionName, columns, data) {
-    // Prepare the data to be written to the spreadsheet
-    const values = data.map(item => columns.map(column => item[column]));
-
-    // Create the value range object
-    const valueRange = {
-        range: `${sectionName}!A4:${String.fromCharCode(65 + columns.length - 1)}${values.length + 3}`,
-        values: [Object.keys(columns), ...values]
-    };
-
-    // Update the spreadsheet using the Google Sheets API
-    const sheets = google.sheets({ version: 'v4' });
-    sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: valueRange.range,
-        valueInputOption: 'USER_ENTERED',
-        resource: valueRange
-    }, (err, res) => {
-        if (err) {
-            console.error('Error updating spreadsheet:', err);
-        } else {
-            console.log('Spreadsheet updated successfully');
-        }
-    });
-}
+async function updateSpreadsheetSection(spreadsheetId, range, columns, data) {
+    console.log(range);
+     const values = data.map(item => columns.map(column => item[column]));       
+    writeToSpreadsheetMultiple(spreadsheetId, range, values);
+} 
 
 // This function would be provided by your database module to fetch data
 async function GetDataFromDB(collectionName, date) {
@@ -182,8 +245,6 @@ function onSelectedDateChange(newDate) {
   updateSpreadsheetWithDBData(newDate);
 }
 
-// You would set up the listener like this, using your spreadsheet library's specific method
-spreadsheetLib.onCellChange('Selected Date Cell', onSelectedDateChange);
 
 // Don't forget to initialize the listener when your application starts
 
