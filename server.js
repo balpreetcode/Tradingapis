@@ -40,7 +40,7 @@ function endcron() {
 }
 app.post("/testChartinkPlaceOrder", async (req, res) => {
 //    closeTradesIfProfitOrLoss(); return;
-  
+  console.log(req.body);
    upsertDBlog('chartInkCalls', req.body, {uid:randomUUID()});
     const stocks = req.body.stocks.split(",");
      let Alerts = stocks.map(stock => ({"Stock": stock,"Date": new Date().toISOString().split('T')[0],"Time": new Date().toISOString()}));  
@@ -48,13 +48,13 @@ app.post("/testChartinkPlaceOrder", async (req, res) => {
   let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks[0]);  
     //console.log(CEsymbol,PEsymbol,exchange,quantityInLots);
      let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
-    startcron(); 
+//    startcron(); 
     res.status(200).send({ data: "returned" });   });/*    
 });
 */
 async function closeTradesIfProfitOrLoss() {
     
-    if(CurrentTimeOver(15,30)) { console.log('endcron'); endcron();}
+  //  if(CurrentTimeOver(15,30)) { console.log('endcron'); endcron();}
         try {
             await deleteAllDataFromCollection('Positions');
             await deleteAllDataFromCollection('Orders');
