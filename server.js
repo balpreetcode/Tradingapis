@@ -56,8 +56,8 @@ async function closeTradesIfProfitOrLoss() {
     
   //  if(CurrentTimeOver(15,30)) { console.log('endcron'); endcron();}
         try {
-            await deleteAllDataFromCollection('Positions');
-            await deleteAllDataFromCollection('Orders');
+            // await deleteAllDataFromCollection('Positions');
+            // await deleteAllDataFromCollection('Orders');
         let positionsResponse = await samcoApiCall('getPositions', '');
         let orders = await samcoApiCall('orderBook', '');
         let Positions = positionsResponse.positionDetails.map(position => {
