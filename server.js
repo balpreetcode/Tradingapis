@@ -28,7 +28,7 @@ function CurrentTimeOver(hrs,mins){
         return (currentHour > hrs || (currentHour === hrs && currentMinute >= mins))
 }
 async function startcron() {
-    job = schedule.scheduleJob('*/20 * * * * *',async function(){
+    job = schedule.scheduleJob('*/5 * * * * *',async function(){
      //   console.log('This runs every 20 seconds.');
       //  console.log(count);
         await closeTradesIfProfitOrLoss(job);
@@ -54,8 +54,9 @@ app.post("/testChartinkPlaceOrder", async (req, res) => {
 */
 async function closeTradesIfProfitOrLoss() {
     
-    if(CurrentTimeOver(15,30)){} else
+    if(CurrentTimeOver(15,30)){console.log('endcron');} else
 {        try {
+    console.log('cronruning');
             // await deleteAllDataFromCollection('Positions');
             // await deleteAllDataFromCollection('Orders');
         let positionsResponse = await samcoApiCall('getPositions', '');
