@@ -8,6 +8,7 @@ import { randomUUID } from "crypto";
 import axios from "axios";
 import {Spreadsheets} from "./config.js";
 import cron from "node-cron";
+import { start } from "repl";
 const app = express();
 const PORT = process.env.PORT || 5001;
 const uri = "mongodb+srv://balpreet:ct8bCW7LDccrGAmQ@cluster0.2pwq0w2.mongodb.net/tradingdb";
@@ -16,6 +17,152 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 dotenv.config();
 app.use(cors());
+
+
+ app.post("/testChartinkPlaceOrder", async (req, res) => {
+    const cIId = await db.collection('chartInkCalls').insertOne(req.body);
+    await upsertDBlog();
+    const stocks = req.body.stocks.split(",");
+    let Alerts = stocks.map(stock => ({"Stock": stock,"Date": new Date().toISOString().split('T')[0],"Time": new Date().toISOString()}));  
+     await multipleInsertDB('Alerts',Alerts);
+     let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks[0]);  
+
+     let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
+    startcron(); 
+});
+async function closeTradesIfProfitOrLoss() {
+    try {
+         if(CurrentTimeOver(15,30)) {console.log('endcron()'); endcron();}
+
+        let positionsResponse = await samcoApiCall('getPositions', '');
+        let orders = await samcoApiCall('orderBook', '');
+    
+        let Positions = positionsResponse.positionDetails.map(position => {
+            return {
+              "Stocks": position.tradingSymbol,
+              "Date": new Date().toISOString().split('T')[0],
+              "Time": new Date().toISOString(),
+              "Bought Price": position.averageBuyPrice,
+              "Current Price": position.lastTradedPrice,
+              "Pnl": position.unrealizedGainAndLoss,
+              "Status": "Open"
+            }});
+        let Orders = orders.orderBookDetails.map(order => {
+                return {
+                  "Stocks": order.tradingSymbol,
+                  "Date": new Date().toISOString().split('T')[0],
+                  "Time": new Date().toISOString(),
+                  "Price": order.orderPrice,
+                  "Status": order.orderStatus
+                }});
+        await multipleInsertDB('Positions',Positions);
+        await multipleInsertDB('Orders',Orders);
+
+        
+        // Call an API endpoint to get current positions
+        let {pnl,positionDetail,maxProfit,maxLoss}= await getSamcoTotalProfitLoss();
+       console.log(pnl,maxProfit,maxLoss);
+        await upsertDBlog("PnL", { date:new Date().getDate ,time: new Date().toLocaleTimeString, profitLoss: pnl });
+        // Check if the total profit is greater than 10 or the loss is less than -2
+        if (pnl > maxProfit || pnl < maxLoss) {
+            // Iterate over the positions and close all trades
+            for (let pos of positionDetail) {
+             let r= await placeSamcoMISOrder(pos.tradingSymbol, pos.exchange, pos.transactionType === 'BUY' ? 'SELL' : 'BUY', pos.netQuantity);
+             }
+        }
+    } catch (error) {
+        console.log(error);
+    }
+}
+function startcron()
+{
+    crontask = cron.schedule('*/5 * * * * *', () =>  {
+    console.log('running a task every 5 seconds', new Date().toLocaleTimeString());
+     closeTradesIfProfitOrLoss();
+}); 
+}
+function endcron(){
+    crontask.stop();
+}
+function CurrentTimeOver(hrs,mins){
+    const currentTime = new Date();
+        const currentHour = currentTime.getHours();
+        const currentMinute = currentTime.getMinutes();
+
+        return (currentHour > hrs || (currentHour === hrs && currentMinute >= mins))
+}
+//getTradingData({Date: '2022-03-01'});
+async function getTradingData(Date)
+{
+  let db = await dbConnect();
+  let Alerts = await db.collection('Alerts').find(Date).toArray();
+  let positionsResponse = await samcoApiCall('getPositions', '');
+  let orders = await samcoApiCall('orderBook', '');
+
+  let Positions = positionsResponse.positionDetails.map(position => {
+      return {
+        "Stocks": position.tradingSymbol,
+        "Date": new Date().toISOString().split('T')[0],
+        "Time": new Date().toISOString(),
+        "Bought Price": position.averageBuyPrice,
+        "Current Price": position.lastTradedPrice,
+        "Pnl": position.unrealizedGainAndLoss,
+        "Status": "Open"
+      }});
+  let Orders = orders.orderBookDetails.map(order => {
+          return {
+            "Stocks": order.tradingSymbol,
+            "Date": new Date().toISOString().split('T')[0],
+            "Time": new Date().toISOString(),
+            "Price": order.orderPrice,
+            "Status": order.orderStatus
+          }});
+  //console.log({Date:Date ,Alerts:Alerts,Orders:Orders,Positions:Positions});
+  return {Alerts:Alerts,Orders:Orders,Positions:Positions};
+} 
+async function updateSpreadsheetWithDBData() {
+    let config=Spreadsheets.TradingSetup;
+// Call the function
+let dte= (await getSpreadsheetData(config.id, 'Sheet1!B1'))[0][0];
+console.log(dte);
+    let dt= await getTradingData({Date: dte});
+ updateSpreadsheetSection(config.id, config.sections[0].range , config.sections[0].columns, dt.Alerts);
+ updateSpreadsheetSection(config.id, config.sections[1].range, config.sections[1].columns, dt.Orders);
+ updateSpreadsheetSection(config.id, config.sections[2].range, config.sections[2].columns, dt.Positions);
+} 
+// This function is called when the selected date changes
+async function updateSpreadsheetSection(spreadsheetId, range, columns, data) {
+     const values = data.map(item => columns.map(column => item[column]));       
+  const blankvalues = Array.from({ length: 16 }, () => Array(columns.length).fill('')); // Creates a 20x13 array filled with empty strings
+await writeToSpreadsheetMultiple(spreadsheetId, range,blankvalues);
+  await writeToSpreadsheetMultiple(spreadsheetId, range, values);
+} 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 app.listen(PORT, () => {
   console.log(`Backend is running on port ${PORT}`);
@@ -26,7 +173,6 @@ async function dbConnect() {
   }
   return client.db();
 }
-
 export async function writeToSpreadsheet(spreadsheetId, range, value) {
     const auth = new google.auth.GoogleAuth({
         keyFile: "credentials.json",
@@ -88,9 +234,7 @@ async function getSpreadsheetData(spreadsheetId, range) {
     } catch (err) {
       console.error(err);
     }
-  }
-  
-
+}
 let reqdata={
   "stocks": "BIKAJI,LATENTVIEW,LTIM,SHOPERSTOP,HONAUT,BAJAJELEC",
   "trigger_prices": "414.05,347,5062.3,812.7,42368.2,1271.45",
@@ -144,7 +288,7 @@ async function getOptionwithMaxVolume(symbol) {
 // return;
  let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${symbol}`);
 // console.log(optionsData.optionChainDetails);
-let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='',CEsymbol='',PEsymbol='';
+let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='';
 for (let detail of optionsData.optionChainDetails) {
     let volume = parseInt(detail.volume, 10);    
     if (volume > maxVolume) {
@@ -156,12 +300,23 @@ for (let detail of optionsData.optionChainDetails) {
 //console.log(maxVolumeTradingSymbol,maxVolume,optionType);
 let symbolDetail = await samcoApiCall('eqDervSearch',`?exchange=NFO&searchSymbolName=${maxVolumeTradingSymbol}`);
 //console.log(symbolDetail);
+let CEsymbol='',PEsymbol='', exchange, quantityInLots;
+if(optionType=='CE')
+  { 
+      CEsymbol= maxVolumeTradingSymbol; 
+      PEsymbol= maxVolumeTradingSymbol.replace('CE', 'PE');//TODO only in end change                
+  } else 
+  {  
+      PEsymbol= maxVolumeTradingSymbol; 
+      CEsymbol= maxVolumeTradingSymbol.replace('PE', 'CE');//TODO only in end change                
+  } 
 
+  exchange=symbolDetail.searchResults[0].exchange;
+  quantityInLots=symbolDetail.searchResults[0].quantityInLots;
 let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == maxVolumeTradingSymbol);
 //console.log(optns);
-return {optns:optns,symbolDetail:symbolDetail,optionType:optionType,maxVolumeTradingSymbol:maxVolumeTradingSymbol,maxVolume:maxVolume};
-} 
-
+return {CEsymbol,PEsymbol,exchange,quantityInLots,symbolDetail,optionsData};
+}
 
 //testinsertSampleData();
 async function testinsertSampleData()
@@ -192,44 +347,7 @@ async function deleteAllDataFromCollection(collectionName)
     return x;
 }
 
-//getTradingData({Date: '2022-03-01'});
-async function getTradingData(Date)
-{
-  let db = await dbConnect();
-  let Alerts = await db.collection('Alerts').find(Date).toArray();
-  let Orders = await db.collection('Orders').find(Date).toArray();
-  let Positions = await db.collection('Positions').find(Date).toArray();
-  //console.log({Date:Date ,Alerts:Alerts,Orders:Orders,Positions:Positions});
-  return {Alerts:Alerts,Orders:Orders,Positions:Positions};
-} 
-app.get("/updateSpreadsheetWithDBData", async (req, res) => {
-await updateSpreadsheetWithDBData();
-res.status(200).send({ data: "updated" });
-});
-// This function is called when the selected date changes
-async function updateSpreadsheetWithDBData() {
-    const range = 'Sheet1!A2:E10'; // Update with the range you want to retrieve
-    let config=Spreadsheets.TradingSetup;
-
-// Call the function
-let dte= (await getSpreadsheetData(config.id, 'Sheet1!B1'))[0][0];
-console.log(dte);
-  // Fetch data for each collection
-    let dt= await getTradingData({Date: dte});
-    console.log(dt);
-  // Update the 'Alerts',Orders,Positions section of the spreadsheet
-  updateSpreadsheetSection(config.id, config.sections[0].range , config.sections[0].columns, dt.Alerts);
-  updateSpreadsheetSection(config.id, config.sections[1].range, config.sections[1].columns, dt.Orders);
-  updateSpreadsheetSection(config.id, config.sections[2].range, config.sections[2].columns, dt.Positions);
-}
-
-// This function is called when the selected date changes
-async function updateSpreadsheetSection(spreadsheetId, range, columns, data) {
-    console.log(range);
-     const values = data.map(item => columns.map(column => item[column]));       
-    writeToSpreadsheetMultiple(spreadsheetId, range, values);
-} 
-
+  
 // This function would be provided by your database module to fetch data
 async function GetDataFromDB(collectionName, date) {
   // Implement the data fetching logic here
@@ -245,32 +363,15 @@ function onSelectedDateChange(newDate) {
   updateSpreadsheetWithDBData(newDate);
 }
 
-
-// Don't forget to initialize the listener when your application starts
-
-
-
-
-
-
-
-
-
-
-
-
-
 let crontask={};
 app.get("/startcron", async (req, res) => {
-crontask = cron.schedule('*/5 * * * * *', () =>  {
- console.log('running a task every 5 seconds', new Date().toLocaleTimeString());
-    // closeTradesIfProfitOrLoss(10,-20);
-});    res.status(200).send({ data: "started" });
+startcron();
+    res.status(200).send({ data: "started" });
 });
 
 app.get("/endcron", async (req, res) => {
 //CronJob Start
- crontask.stop();
+ endcron();
     res.status(200).send({ data: "stopped" });
 });
 
@@ -312,58 +413,6 @@ app.post("/samcoTestPlaceOrder", async (req, res) => {
   res.status(200).send({ data: 'success' });
 });
 
-// let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${stocks[i]}`);
-// let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='',CEsymbol='',PEsymbol='';
-// for (let detail of optionsData.optionChainDetails) {
-//     let volume = parseInt(detail.volume, 10);    
-//     if (volume > maxVolume) {
-//         maxVolume = volume;
-//         maxVolumeTradingSymbol = detail.tradingSymbol;
-//         optionType=detail.optionType;
-//     }
-// }
-// let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == CEsymbol || dt.tradingSymbol == PEsymbol);
-// app.post('/sampcoPlaceOrder', async (req, res) => {
-// let slPrice=(req.query.SLper) ? price*(100-req.query.SLper)/100: price*.99;
-//           let tgtPrice=(req.query.TGTper) ? price*(100+req.query.TGTper)/100: price*1.01;    
-//           const order = {
-//               symbolName: stocks[i],
-//               exchange: exchange,
-//               transactionType: tradeType,
-//               orderType: "SL",//"MKT",
-//               quantity: quantity.toString(),
-//               disclosedQuantity: "",
-//               orderValidity: "DAY",
-//               productType: "MIS",
-//               price:price,
-//               priceType:"LTP",
-//               triggerPrice:slPrice,
-//               afterMarketOrderFlag: "NO"
-//           };
-//           const tgtOrder = {
-//               symbolName: stocks[i],
-//               exchange: exchange,
-//               transactionType: tradeType,
-//               orderType: "L",//"MKT",
-//               quantity: quantity.toString(),
-//               disclosedQuantity: "",
-//               orderValidity: "DAY",
-//               productType: "MIS",
-//               price:tgtPrice,
-//               priceType:"LTP",
-//               afterMarketOrderFlag: "NO"
-//           };
-//           const response = await samcoApiCall('placeOrder', order);
-//           const response2 = await samcoApiCall('placeOrder', tgtOrder);
-//           cl(response);
-//           cl(response2);
-//       let data={lotSize:lotSize,SL:cnf.SL,MinProfit:cnf.MinProfit,TrailingSL: cnf.TrailingSL,Budget:lmt,Quantity:quantity,reqID:reqID,req:order};
-//       cl(data);
-//       upsertDBlog('TradingData',data);
-//           responses.push(response);
-//       });
-
-
 
 app.get('/get/:id', async (req, res) => {
   const { id } = req.params; // Extract the id from the request parameters
@@ -397,77 +446,80 @@ async function testcall(req)
 
 let isPapertrade=true;
 
-
-
+app.get("/updateSpreadsheetWithDBData", async (req, res) => {
+    await updateSpreadsheetWithDBData();
+    res.status(200).send({ data: "updated" });
+    });
+    
 //Done need testing
 app.post("/updateTrailingStopLoss", async (req, res) => {
-  isPapertrade= chkeq(req.query.isPapertrade,'true');
-  // Call an API endpoint to get current positions
-  let positionsResponse = await samcoApiCall('getPositions', '');
-  let positionDetail = positionsResponse.positionDetails.filter(pos => pos.netQuantity > 0);
-
-if (!positionsResponse.positionDetails || positionDetail.length === 0) {
-  return res.status(500).send({ error: 'Failed to retrieve positions or all positions have zero net quantity' });
-}
-
-  // Get the list of stocks from the request query, if provided
-  let requestedStocks = getStrArray(req.query.stocks);
-  // Filter for negative positions, and only for requested stocks if provided
-
-  cl(positionDetail.map(pos => pos.markToMarketPrice));
-  let positions = positionDetail.filter(position => {
-      return  (!requestedStocks || requestedStocks.includes(position.tradingSymbol));
-  });
+    isPapertrade= chkeq(req.query.isPapertrade,'true');
+    // Call an API endpoint to get current positions
+    let positionsResponse = await samcoApiCall('getPositions', '');
+    let positionDetail = positionsResponse.positionDetails.filter(pos => pos.netQuantity > 0);
   
-     // Prepare a place to collect responses
-     let responses = [];
-      // Get configuration from database
-      let conf=(req.query.config)?req.query.config:'standardConfig';
-      const reqConf=await getConfigFromDB(conf); 
+  if (!positionsResponse.positionDetails || positionDetail.length === 0) {
+    return res.status(500).send({ error: 'Failed to retrieve positions or all positions have zero net quantity' });
+  }
   
-     // Iterate over the positions
-     for (let position of positions) {
-        let symConf=findFromDB('TradingData',{symbol:position.tradingSymbol});
-        let config=(symConf)? symConf:reqConf;
-        cl(config);
-        return;
+    // Get the list of stocks from the request query, if provided
+    let requestedStocks = getStrArray(req.query.stocks);
+    // Filter for negative positions, and only for requested stocks if provided
+  
+    cl(positionDetail.map(pos => pos.markToMarketPrice));
+    let positions = positionDetail.filter(position => {
+        return  (!requestedStocks || requestedStocks.includes(position.tradingSymbol));
+    });
+    
+       // Prepare a place to collect responses
+       let responses = [];
+        // Get configuration from database
+        let conf=(req.query.config)?req.query.config:'standardConfig';
+        const reqConf=await getConfigFromDB(conf); 
+    
+       // Iterate over the positions
+       for (let position of positions) {
+          let symConf=findFromDB('TradingData',{symbol:position.tradingSymbol});
+          let config=(symConf)? symConf:reqConf;
+          cl(config);
+          return;
+  
+           // Check if the PnL is greater than the minimum profit
+           if (position.pnl > config.MinProfit) {
+   
+               // Update the trailing stop loss and minimum profit
+               config.TrailingStopLoss = position.pnl - config.TrailingSLstep;
+               config.MinProfit = position.pnl + config.TrailingSLstep;
+   
+               //TODO Save the updated configuration to the database
+               let updateResponse = await upsertDBlog('TradingData',{symbol:position.tradingSymbol, position:position,config});
+               responses.push(updateResponse);
+   
+           // Check if the PnL is less than the trailing stop loss
+           } else if (position.pnl < config.TrailingStopLoss) {
+   
+               // Define the order to close the trade
+               let order = {
+                   symbolName: position.tradingSymbol,
+                   exchange: position.exchange,
+                   transactionType: position.transactionType === 'BUY' ? 'SELL' : 'BUY',  // Reverse the transaction type
+                   orderType: 'MKT',  // Market order to ensure the order is filled
+                   quantity: position.netQuantity.toString(),
+                   orderValidity: 'DAY',
+                   productType: 'MIS',
+                   afterMarketOrderFlag: 'NO'
+               };
+   
+               // Call the API to place the order
+               let orderResponse = await samcoApiCall('placeOrder', order);
+               responses.push(orderResponse);
+           }
+       }
+   
+       // Respond with the data
+       res.status(200).send({ data: responses });
+   });
 
-         // Check if the PnL is greater than the minimum profit
-         if (position.pnl > config.MinProfit) {
- 
-             // Update the trailing stop loss and minimum profit
-             config.TrailingStopLoss = position.pnl - config.TrailingSLstep;
-             config.MinProfit = position.pnl + config.TrailingSLstep;
- 
-             //TODO Save the updated configuration to the database
-             let updateResponse = await upsertDBlog('TradingData',{symbol:position.tradingSymbol, position:position,config});
-             responses.push(updateResponse);
- 
-         // Check if the PnL is less than the trailing stop loss
-         } else if (position.pnl < config.TrailingStopLoss) {
- 
-             // Define the order to close the trade
-             let order = {
-                 symbolName: position.tradingSymbol,
-                 exchange: position.exchange,
-                 transactionType: position.transactionType === 'BUY' ? 'SELL' : 'BUY',  // Reverse the transaction type
-                 orderType: 'MKT',  // Market order to ensure the order is filled
-                 quantity: position.netQuantity.toString(),
-                 orderValidity: 'DAY',
-                 productType: 'MIS',
-                 afterMarketOrderFlag: 'NO'
-             };
- 
-             // Call the API to place the order
-             let orderResponse = await samcoApiCall('placeOrder', order);
-             responses.push(orderResponse);
-         }
-     }
- 
-     // Respond with the data
-     res.status(200).send({ data: responses });
- });
- //Done and Tested
 app.post("/PlaceOrderChartInk", async (req, res) => {
     const db = await dbConnect();
     const orderCollection = db.collection('chartInkCalls');
@@ -821,23 +873,7 @@ if (!positionsResponse.positionDetails || positionDetail.length === 0) {
  * @param {number} maxLoss - The maximum loss threshold.
  * @returns {Promise<void>} - A promise that resolves when all trades are closed.
  */
-async function closeTradesIfProfitOrLoss(maxPercentProfit,maxPercentLoss) {
-    try {
-        // Call an API endpoint to get current positions
-        let {pnl,positionDetail,maxProfit,maxLoss}= await getSamcoTotalProfitLoss();
-       console.log(pnl,maxProfit,maxLoss);
-        await upsertDBlog("PnL", { date:new Date().getDate ,time: new Date().toLocaleTimeString, profitLoss: pnl });
-        // Check if the total profit is greater than 10 or the loss is less than -2
-        if (pnl > maxProfit || pnl < maxLoss) {
-            // Iterate over the positions and close all trades
-            for (let pos of positionDetail) {
-           //  let r= await placeSamcoMISOrder(pos.tradingSymbol, pos.exchange, pos.transactionType === 'BUY' ? 'SELL' : 'BUY', pos.netQuantity);
-             }
-        }
-    } catch (error) {
-        console.log(error);
-    }
-}
+
 async function getSamcoTotalProfitLoss(maxPercentProfit,maxPercentLoss) {
     let positionsResponse = await samcoApiCall('getPositions', '');
     let positionDetail = positionsResponse.positionDetails;
@@ -974,6 +1010,37 @@ async function getConfigFromDB(type) {
   const data = await collection.findOne({type:type});
   //console.log(data);
   return data.config;
+}
+
+async function placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots){
+    let CEorder = {
+        symbolName: CEsymbol,
+        exchange: exchange,
+        transactionType: 'BUY',
+        orderType: 'MKT',
+        quantity: quantityInLots,
+        orderValidity: 'DAY',
+        productType: 'MIS',
+        afterMarketOrderFlag: 'NO'
+    };
+    let PEorder = {
+        symbolName: PEsymbol,
+        exchange: exchange,
+        transactionType: 'BUY',
+        orderType: 'MKT',
+        quantity: quantityInLots,
+        orderValidity: 'DAY',
+        productType: 'MIS',
+        afterMarketOrderFlag: 'NO'
+    };
+    // Call the API to place the order to close the trade
+    let CEresponse = await samcoApiCall('placeOrder', CEorder);
+    cl(CEresponse);
+    upsertDBlog('TradingData',{order:CEorder,response:CEresponse},{uid:randomUUID()});
+    let PEresponse = await samcoApiCall('placeOrder', PEorder);
+    upsertDBlog('TradingData',{order:PEorder,response:PEresponse},{uid:randomUUID()});
+    cl(PEresponse);
+    return {CEresponse:CEresponse,PEresponse:PEresponse};
 }
 
 async function placeSamcoMISOrder(position){
