@@ -46,7 +46,7 @@ app.post("/testChartinkPlaceOrder", async (req, res) => {
      let Alerts = stocks.map(stock => ({"Stock": stock,"Date": new Date().toISOString().split('T')[0],"Time": new Date().toISOString()}));  
       await multipleInsertDB('Alerts',Alerts);
   let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks[0]);  
-    //console.log(CEsymbol,PEsymbol,exchange,quantityInLots);
+    console.log(CEsymbol,PEsymbol,exchange,quantityInLots);
      let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
     startcron(); 
     res.status(200).send({ data: "returned" });   });/*    
