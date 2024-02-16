@@ -45,10 +45,10 @@ app.post("/testChartinkPlaceOrder", async (req, res) => {
     const stocks = req.body.stocks.split(",");
      let Alerts = stocks.map(stock => ({"Stock": stock,"Date": new Date().toISOString().split('T')[0],"Time": new Date().toISOString()}));  
       await multipleInsertDB('Alerts',Alerts);
-  let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks[0]);  
+  let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks);  
     console.log(CEsymbol,PEsymbol,exchange,quantityInLots);
      let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
-    startcron(); 
+    //startcron(); 
     res.status(200).send({ data: "returned" });   });/*    
 });
 */
@@ -288,8 +288,13 @@ async function upsertDBlog(collectionName, req,filter) {
 }
 //getOptionwithMaxVolume('NIFTY');
 
-async function getOptionwithMaxVolume(symbol) {
+async function getOptionwithMaxVolume(symbols) {
+    for(let i=0;i<symbols.length;i++)
+    {let symbol=symbols[i];
+        console.log(symbol);
  let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${symbol}`);
+ if(optionsData==0) continue; 
+ //console.log(optionsData.data); 
 let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='';
 for (let detail of optionsData.optionChainDetails) {
     let volume = parseInt(detail.volume, 10);    
@@ -315,6 +320,8 @@ if(optionType=='CE')
   quantityInLots=symbolDetail.searchResults[0].bodLotQuantity;
 let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == maxVolumeTradingSymbol);
 return {CEsymbol,PEsymbol,exchange,quantityInLots,symbolDetail,optionsData};
+}
+return{};
 }
 
 //testinsertSampleData();
@@ -1060,7 +1067,7 @@ async function placeSamcoMISOrder(position){
 }
 
 async function samcoApiCall(ApiName, ReqData) {
-  console.log('samcoApiCall', ApiName);
+  //console.log('samcoApiCall', ApiName);
 //   cl(isPapertrade);
     if (sn.snapi.sessionToken == undefined) await loginSamco({});
   const headers = {
@@ -1084,8 +1091,8 @@ async function samcoApiCall(ApiName, ReqData) {
   //  console.log(response.data);
     return response.data;
   } catch (error) {
-    console.error(`Error: `);
-    throw error;
+    //console.error(error.data);
+   return 0;
   }
 }
 async function samcoApiPapertrade(ApiName,ReqData){
