@@ -29,8 +29,8 @@ function CurrentTimeOver(hrs,mins){
 }
 async function startcron() {
     job = schedule.scheduleJob('*/20 * * * * *',async function(){
-        console.log('This runs every 20 seconds.');
-        console.log(count);
+     //   console.log('This runs every 20 seconds.');
+      //  console.log(count);
         await closeTradesIfProfitOrLoss(job);
       });
 }
@@ -48,14 +48,14 @@ app.post("/testChartinkPlaceOrder", async (req, res) => {
   let {CEsymbol,PEsymbol,exchange,quantityInLots}= await getOptionwithMaxVolume(stocks[0]);  
     //console.log(CEsymbol,PEsymbol,exchange,quantityInLots);
      let r= await placeSamcoCEPEOrder(CEsymbol,PEsymbol, exchange, quantityInLots);
-//    startcron(); 
+    startcron(); 
     res.status(200).send({ data: "returned" });   });/*    
 });
 */
 async function closeTradesIfProfitOrLoss() {
     
-  //  if(CurrentTimeOver(15,30)) { console.log('endcron'); endcron();}
-        try {
+    if(CurrentTimeOver(15,30)){} else
+{        try {
             // await deleteAllDataFromCollection('Positions');
             // await deleteAllDataFromCollection('Orders');
         let positionsResponse = await samcoApiCall('getPositions', '');
@@ -96,7 +96,7 @@ async function closeTradesIfProfitOrLoss() {
         console.log(error);
     }
 }
-let crontask; // Define crontask in a scope accessible to both functions
+}
 
 //getTradingData({Date: '2022-03-01'});
 async function getTradingData(Date)
