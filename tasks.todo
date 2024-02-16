@@ -1,9 +1,9 @@
-1. Test get correct PNL
 2. Test auto close if total PNL and close cron
 3. test auto start
 4. Test auto find options
 5. test auto place order and start cron
-6. test Render html with Graph of pnl data
+6. Decide all items for graph 
+7. Move all data to excel sheet
 
 
 UI(Render an html page with following components)

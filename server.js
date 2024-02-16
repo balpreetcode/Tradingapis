@@ -1,9 +1,12 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { google } from "googleapis";
 import sn from "stocknotejsbridge";
 import { MongoClient } from "mongodb";
 import { randomUUID } from "crypto";
+import axios from "axios";
+import {Spreadsheets} from "./config.js";
 import cron from "node-cron";
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -22,6 +25,26 @@ async function dbConnect() {
     client = await MongoClient.connect(uri);
   }
   return client.db();
+}
+
+export async function writeToSpreadsheet(spreadsheetId, range, value) {
+    const auth = new google.auth.GoogleAuth({
+        keyFile: "credentials.json",
+        scopes: "https://www.googleapis.com/auth/spreadsheets",
+    });
+
+    const client = await auth.getClient();
+    const googleSheets = google.sheets({ version: "v4", auth: client });
+
+    await googleSheets.spreadsheets.values.update({
+        auth,
+        spreadsheetId,
+        range,
+        valueInputOption: 'USER_ENTERED', // 'RAW' if you don't want to allow user to enter formula
+        resource: {
+            values: [[value]]
+        }
+    });
 }
 
 let reqdata={
@@ -56,6 +79,125 @@ async function upsertDBlog(collectionName, req,filter) {
       return ex;
     }
 }
+//getOptionwithMaxVolume('NIFTY');
+
+async function getOptionwithMaxVolume(symbol) {
+
+//  let optionsDt = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${symbol}`);
+//  let symbolDet = await samcoApiCall('eqDervSearch',`?searchSymbolName=${symbol}`);
+// console.log(symbolDet);
+// return;
+ let optionsData = await samcoApiCall('optionChain',`?exchange=NFO&searchSymbolName=${symbol}`);
+// console.log(optionsData.optionChainDetails);
+let maxVolume = 0, maxVolumeTradingSymbol = '',optionType='',CEsymbol='',PEsymbol='';
+for (let detail of optionsData.optionChainDetails) {
+    let volume = parseInt(detail.volume, 10);    
+    if (volume > maxVolume) {
+        maxVolume = volume;
+        maxVolumeTradingSymbol = detail.tradingSymbol;
+        optionType=detail.optionType;
+    }
+}
+//console.log(maxVolumeTradingSymbol,maxVolume,optionType);
+let symbolDetail = await samcoApiCall('eqDervSearch',`?exchange=NFO&searchSymbolName=${maxVolumeTradingSymbol}`);
+//console.log(symbolDetail);
+
+let optns = optionsData.optionChainDetails.filter(dt => dt.tradingSymbol == maxVolumeTradingSymbol);
+//console.log(optns);
+return {optns:optns,symbolDetail:symbolDetail,optionType:optionType,maxVolumeTradingSymbol:maxVolumeTradingSymbol,maxVolume:maxVolume};
+} 
+
+//writeToSpreadsheet()
+
+async function writeToSpreadsheet()
+{
+    let spreadsheetId = '1Z232JpS1wSLgquoDbjHfhRXHed-UlQIX6l6rw4RQ_ZY'; // Replace with your Spreadsheet ID
+    let range = 'Sheet1!A1'; // Replace with the range you want to update
+    let value = 'Hello, world!'; // Replace with the value you want to write
+    
+    writeToSpreadsheet(spreadsheetId, range, value);
+}
+
+// This function is called when the selected date changes
+async function updateSpreadsheetWithDBData(newDate) {
+  // Fetch data for each collection
+  const alertsData = await findFromDB('Alerts', {date: newDate});
+  const ordersData = await findFromDB('Orders',{date: newDate});
+  const positionsData = await findFromDB('Positions', {date: newDate});
+
+  // Update the 'Alerts',Orders,Positions section of the spreadsheet
+  let config={id:'1Z232JpS1wSLgquoDbjHfhRXHed-UlQIX6l6rw4RQ_ZY',
+  sections:[
+      {name:'Alerts',columns:[{'Stocks':'A4'},{'Time':'B4'},]},
+      {name:'Orders',columns:[{'Stocks':'D4'},{'Price':'E4'},{'Time':'F4'},{'Status':'G4'}]},
+      {name:'Positions',columns:[{'Stocks':'I4'},{'Bought Price':'J4'},{'Current Price':'K4'},{'Pnl':'L4'},{'Status':'M4'}]},
+  ]
+  };
+  updateSpreadsheetSection(config.id, 'Alerts', config.sections[0].columns, alertsData);
+  updateSpreadsheetSection(config.id, 'Orders', config.sections[1].columns, ordersData);
+  updateSpreadsheetSection(config.id, 'Positions', config.sections[2].columns, positionsData);
+
+}
+
+
+// This function is called when the selected date changes
+function updateSpreadsheetSection(spreadsheetId, sectionName, columns, data) {
+    // Prepare the data to be written to the spreadsheet
+    const values = data.map(item => columns.map(column => item[column]));
+
+    // Create the value range object
+    const valueRange = {
+        range: `${sectionName}!A4:${String.fromCharCode(65 + columns.length - 1)}${values.length + 3}`,
+        values: [Object.keys(columns), ...values]
+    };
+
+    // Update the spreadsheet using the Google Sheets API
+    const sheets = google.sheets({ version: 'v4' });
+    sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: valueRange.range,
+        valueInputOption: 'USER_ENTERED',
+        resource: valueRange
+    }, (err, res) => {
+        if (err) {
+            console.error('Error updating spreadsheet:', err);
+        } else {
+            console.log('Spreadsheet updated successfully');
+        }
+    });
+}
+
+// This function would be provided by your database module to fetch data
+async function GetDataFromDB(collectionName, date) {
+  // Implement the data fetching logic here
+  // This should return the data in a format that your spreadsheet library can use to update the cells
+  return db.fetchCollectionData(collectionName, date);
+}
+
+// You would also need a listener that detects when the 'Selected Date' cell changes
+// This will depend on how your spreadsheet is set up to notify you of changes
+// Here is a conceptual example:
+
+function onSelectedDateChange(newDate) {
+  updateSpreadsheetWithDBData(newDate);
+}
+
+// You would set up the listener like this, using your spreadsheet library's specific method
+spreadsheetLib.onCellChange('Selected Date Cell', onSelectedDateChange);
+
+// Don't forget to initialize the listener when your application starts
+
+
+
+
+
+
+
+
+
+
+
+
 
 let crontask={};
 app.get("/startcron", async (req, res) => {
@@ -610,7 +752,7 @@ if (!positionsResponse.positionDetails || positionDetail.length === 0) {
     // Respond with the data from placing the orders
     res.status(200).send({ data: responses });
 });
-
+//closeTradesIfProfitOrLoss(10,-20);
 /**
  * Closes trades if the total profit is greater than a specified maximum profit or the loss is less than a specified maximum loss.
  * @param {Array} positions - The current positions.
@@ -618,36 +760,39 @@ if (!positionsResponse.positionDetails || positionDetail.length === 0) {
  * @param {number} maxLoss - The maximum loss threshold.
  * @returns {Promise<void>} - A promise that resolves when all trades are closed.
  */
-async function closeTradesIfProfitOrLoss(maxProfit,maxLoss) {
+async function closeTradesIfProfitOrLoss(maxPercentProfit,maxPercentLoss) {
     try {
         // Call an API endpoint to get current positions
-        let totalProfitLoss= await getSamcoTotalProfitLoss();
-       
-        await upsertDBlog("PnL", { date:new Date().getDate ,time: new Date().toLocaleTimeString, profitLoss: totalProfitLoss });
+        let {pnl,positionDetail,maxProfit,maxLoss}= await getSamcoTotalProfitLoss();
+       console.log(pnl,maxProfit,maxLoss);
+        await upsertDBlog("PnL", { date:new Date().getDate ,time: new Date().toLocaleTimeString, profitLoss: pnl });
         // Check if the total profit is greater than 10 or the loss is less than -2
-        if (totalProfitLoss > maxProfit || totalProfitLoss < maxLoss) {
+        if (pnl > maxProfit || pnl < maxLoss) {
             // Iterate over the positions and close all trades
             for (let pos of positionDetail) {
-             let r= await placeSamcoMISOrder(pos.tradingSymbol, pos.exchange, pos.transactionType === 'BUY' ? 'SELL' : 'BUY', pos.netQuantity);
+           //  let r= await placeSamcoMISOrder(pos.tradingSymbol, pos.exchange, pos.transactionType === 'BUY' ? 'SELL' : 'BUY', pos.netQuantity);
              }
         }
     } catch (error) {
         console.log(error);
     }
 }
-async function getSamcoTotalProfitLoss() {
+async function getSamcoTotalProfitLoss(maxPercentProfit,maxPercentLoss) {
     let positionsResponse = await samcoApiCall('getPositions', '');
     let positionDetail = positionsResponse.positionDetails;
+    let totalNetPositionValue = 0;
+    for (let detail of positionDetail) {
+        totalNetPositionValue += parseFloat(detail.netPositionValue);
+    }
 
-    // Calculate the total profit or loss
-    let totalProfitLoss = positionDetail.reduce((acc, position) => {
-        let price = Number(position.markToMarketPrice.replace(/,/g, ''));
-        let quantity = Number(position.netQuantity);
-        let profitLoss = price * quantity;
-        return acc + profitLoss;
-    }, 0);
-    return totalProfitLoss;
+    // Calculate the percentage of the total net position value
+    let maxProfit = (totalNetPositionValue * maxPercentProfit) / 100;
+    let maxLoss = (totalNetPositionValue * maxPercentLoss) / 100;
+    let profitLoss=positionsResponse.positionSummary.dayGainAndLossAmount;
+    return {pnl:profitLoss,positionDetail:positionDetail,maxProfit:maxProfit,maxLoss:maxLoss};
 }
+
+
 //Done and tested
 app.get("/chartInkSyncSamcoSymbols",async (req,res) => {
     const CSV_URL = 'https://developers.stocknote.com/doc/ScripMaster.csv';
@@ -809,7 +954,8 @@ async function samcoApiCall(ApiName, ReqData) {
     else if (ApiName == 'getPositions') response = await axios.get(url + '/position/' + ApiName + '?positionType=DAY' + ReqData, { headers: headers });
     else if (ApiName == 'orderBook') response = await axios.get(url + '/order/' + ApiName + ReqData, { headers: headers });
     else if (ApiName == 'cancelOrder') response = await axios.delete(url + '/order/' + ApiName + ReqData, { headers: headers });
-    
+    else if (ApiName == 'eqDervSearch') response = await axios.get(url + '/eqDervSearch/search' + ReqData, { headers: headers });
+    https://api.stocknote.com/eqDervSearch/search?searchSymbolName=INFY    
    // console.log(response.data);
     return response.data;
   } catch (error) {
@@ -935,7 +1081,7 @@ async function loginSamco(req) {
     const logindata = {
         body: {
             "userId": "DB34326",
-            "password": "pAncy@1988",
+            "password": "Pancy@1988",
             "yob": "1989",
         },
     };
