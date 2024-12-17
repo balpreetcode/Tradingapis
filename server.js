@@ -499,6 +499,84 @@ async function testcall(req)
 
 let isPapertrade=true;
 
+app.get("/SamcoPlaceOrder", async (req, res) => {
+    let maxVolumeOptions = await getMaxVolumeOptions(samcoApiCall, 'BANKNIFTY');
+    
+    console.log("CALL option with max volume:", maxVolumeOptions.callOption.symbol, "Volume:", maxVolumeOptions.callOption.volume);
+    console.log("PUT option with max volume:", maxVolumeOptions.putOption.symbol, "Volume:", maxVolumeOptions.putOption.volume);
+
+    var order = {
+            "symbolName":maxVolumeOptions.callOption.symbol,// "BANKNIFTY25JAN54000CE",
+            "exchange": sn.constants.EXCHANGE_NFO,
+            "transactionType": sn.constants.TRANSACTION_TYPE_BUY,
+            "orderType": sn.constants.ORDER_TYPE_MARKET,
+            "quantity": "15",
+            "disclosedQuantity": "",
+            "orderValidity": sn.constants.VALIDITY_DAY,
+            "productType": sn.constants.PRODUCT_MIS,
+            "afterMarketOrderFlag": "YES"
+          };
+      
+    // const order = {
+    //     symbolName: stocks[i],
+    //     exchange: exchange,
+    //     transactionType: tradeType,
+    //     orderType: "MKT",
+    //     quantity: quantity.toString(),
+    //     disclosedQuantity: "",
+    //     orderValidity: "DAY",
+    //     productType: "MIS",
+    //     price:parseFloat(price).toFixed(1),
+    //     priceType:"LTP",
+    //     triggerPrice:parseFloat(slPrice).toFixed(1),
+    //     afterMarketOrderFlag: "YES"
+    // };   
+    console.log(req.body.order)
+    // const response1 = await samcoApiCall('placeOrder', req.body.order);
+    const response= await samcoApiCall('placeOrder', order);
+    console.log('response1',response);
+    res.status(200).send({ response: response });
+    // console.log('response2',response2);
+
+});
+
+// Method to fetch CALL and PUT options with maximum volume
+async function getMaxVolumeOptions(samcoApiCall, searchSymbolName) {
+    let optionsData = await samcoApiCall('optionChain', `?exchange=NFO&searchSymbolName=${searchSymbolName}`);
+
+    let maxVolumeCE = 0, maxVolumePE = 0;
+    let maxVolumeTradingSymbolCE = '', maxVolumeTradingSymbolPE = '';
+
+    // Loop through the option chain details
+    for (let detail of optionsData.optionChainDetails) {
+        let volume = parseInt(detail.volume, 10);
+
+        if (detail.optionType === 'CE' && volume > maxVolumeCE) {
+            maxVolumeCE = volume;
+            maxVolumeTradingSymbolCE = detail.tradingSymbol;
+        }
+
+        if (detail.optionType === 'PE' && volume > maxVolumePE) {
+            maxVolumePE = volume;
+            maxVolumeTradingSymbolPE = detail.tradingSymbol;
+        }
+    }
+
+    // Return the result as an object
+    return {
+        callOption: {
+            symbol: maxVolumeTradingSymbolCE,
+            volume: maxVolumeCE
+        },
+        putOption: {
+            symbol: maxVolumeTradingSymbolPE,
+            volume: maxVolumePE
+        }
+    };
+}
+
+// Example usage
+
 app.get("/updateSpreadsheetWithDBData", async (req, res) => {
     await updateSpreadsheetWithDBData();
     res.status(200).send({ data: "updated" });
@@ -1260,7 +1338,7 @@ async function loginSamco(req) {
     const logindata = {
         body: {
             "userId": "DB34326",
-            "password": "Pancy@1988",
+            "password": "pAncy@1988",
             "yob": "1989",
         },
     };
